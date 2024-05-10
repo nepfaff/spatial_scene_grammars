@@ -3,3 +3,6 @@ __pycache__
 *.png
 *.dat
 *.ipynb_checkpoints
+.venv
+.vscode
+*.egg-info

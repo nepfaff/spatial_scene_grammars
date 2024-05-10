@@ -4,13 +4,15 @@ lxml
 matplotlib
 networkx
 codecov
-pygraphviz
+# pygraphviz
 pytest-cov
 pytest-subtests
 pytest-dependency
-pyro-ppl==1.7.0
+pyro-ppl
 torchviz
-torch==1.9.1
+torch
 torch_geometric==1.7.0
-pytorch3d==0.3
+# pytorch3d
 meshcat
+black
+drake
