@@ -9,9 +9,9 @@ import pyro.poutine as poutine
 from pyro.infer import MCMC, NUTS, HMC
 from pyro.contrib.autoname import scope
 
-from pydrake.all import (
-    ConnectMeshcatVisualizer
-)
+# from pydrake.all import (
+#     ConnectMeshcatVisualizer
+# )
 from .random_walk_kernel import RandomWalkKernel
 from .rules import *
 from .constraints import PoseConstraint, StructureConstraint
@@ -453,19 +453,19 @@ def do_fixed_structure_hmc_with_constraint_penalties(
     if zmq_url is not None:
         builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = compile_scene_tree_to_mbp_and_sg(scene_tree)
         mbp.Finalize()
-        visualizer = ConnectMeshcatVisualizer(builder, sg,
-            zmq_url=zmq_url, prefix=prefix)
+        # visualizer = ConnectMeshcatVisualizer(builder, sg,
+        #     zmq_url=zmq_url, prefix=prefix)
         diagram = builder.Build()
         diagram_context = diagram.CreateDefaultContext()
         mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
-        vis_context = diagram.GetMutableSubsystemContext(visualizer, diagram_context)
-        visualizer.load()
+        # vis_context = diagram.GetMutableSubsystemContext(visualizer, diagram_context)
+        # visualizer.load()
         def hook_fn(kernel, samples, stage, i):
             # Set MBP context to 
             for node, body_ids in node_to_free_body_ids_map.items():
                 for body_id in body_ids:
                     mbp.SetFreeBodyPose(mbp_context, mbp.get_body(body_id), torch_tf_to_drake_tf(node.tf))
-            diagram.Publish(diagram_context)
+            diagram.ForcedPublish(diagram_context)
             draw_scene_tree_structure_meshcat(scene_tree, zmq_url=zmq_url,  prefix=prefix + "/structure", delete=False, **structure_vis_kwargs)
             time.sleep(0.1)
     else:

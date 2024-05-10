@@ -29,7 +29,7 @@ if __name__ == "__main__":
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=0.001))
     parser = Parser(mbp)
-    model_id = parser.AddModelFromFile(args.model_path)
+    model_id = parser.AddModels(args.model_path)
     mbp.Finalize()
     
     print(args.port)

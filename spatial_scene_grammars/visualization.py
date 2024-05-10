@@ -5,9 +5,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import pydrake
-from pydrake.all import (
-    ConnectMeshcatVisualizer,
-)
+# from pydrake.all import (
+#     ConnectMeshcatVisualizer,
+# )
 from .drake_interop import *
 
 def rgb_2_hex(rgb):
@@ -30,25 +30,25 @@ def draw_scene_tree_contents_meshcat(scene_tree, prefix="scene", zmq_url=None, a
         builder, mbp, scene_graph, _, _, = compile_scene_tree_to_mbp_and_sg(scene_tree)
     mbp.Finalize()
 
-    if quiet:
-        with open(os.devnull, 'w') as devnull:
-            with contextlib.redirect_stdout(devnull):
-                vis = ConnectMeshcatVisualizer(builder, scene_graph,
-                    zmq_url=zmq_url or "default", prefix=prefix)
-    else:
-        vis = ConnectMeshcatVisualizer(builder, scene_graph,
-            zmq_url=zmq_url or "default", prefix=prefix)
-    vis.delete_prefix()
-    diagram = builder.Build()
-    context = diagram.CreateDefaultContext()
-    vis.load(vis.GetMyContextFromRoot(context))
-    diagram.Publish(context)
+    # if quiet:
+    #     with open(os.devnull, 'w') as devnull:
+    #         with contextlib.redirect_stdout(devnull):
+    #             vis = ConnectMeshcatVisualizer(builder, scene_graph,
+    #                 zmq_url=zmq_url or "default", prefix=prefix)
+    # else:
+    #     vis = ConnectMeshcatVisualizer(builder, scene_graph,
+    #         zmq_url=zmq_url or "default", prefix=prefix)
+    # vis.delete_prefix()
+    # diagram = builder.Build()
+    # context = diagram.CreateDefaultContext()
+    # vis.load(vis.GetMyContextFromRoot(context))
+    # diagram.Publish(context)
     # Necessary to manually remove this meshcat visualizer now that we're
     # done with it, as a lot of Drake systems (that are involved with the
     # diagram builder) don't get properly garbage collected. See Drake issue #14387.
     # Meshcat collects sockets, so deleting this avoids a file descriptor
     # leak.
-    del vis.vis
+    # del vis.vis
 
 def draw_scene_tree_structure_meshcat(scene_tree, prefix="scene_tree", zmq_url=None,
         alpha=0.775, node_sphere_size=0.05, linewidth=2, with_triad=True, quiet=True,

@@ -9,7 +9,7 @@ from pydrake.all import (
     AddMultibodyPlantSceneGraph,
     BasicVector,
     BodyIndex,
-    ConnectMeshcatVisualizer,
+    # ConnectMeshcatVisualizer,
     CoulombFriction,
     DiagramBuilder,
     LeafSystem,
@@ -154,8 +154,8 @@ if __name__ == "__main__":
     builder.Connect(forcer.get_output_port(0),
                     mbp.get_applied_spatial_force_input_port())
 
-    visualizer = ConnectMeshcatVisualizer(builder, scene_graph,
-        zmq_url="default")
+    # visualizer = ConnectMeshcatVisualizer(builder, scene_graph,
+    #     zmq_url="default")
     diagram = builder.Build()
     diag_context = diagram.CreateDefaultContext()
     mbp_context = diagram.GetMutableSubsystemContext(mbp, diag_context)

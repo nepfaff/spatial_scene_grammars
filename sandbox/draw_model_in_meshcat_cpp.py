@@ -26,7 +26,7 @@ if __name__ == "__main__":
     )
     # Parse requested file
     parser = Parser(mbp, scene_graph)
-    model_id = parser.AddModelFromFile(args.model_path)
+    model_id = parser.AddModels(args.model_path)
 
     mbp.Finalize()
 

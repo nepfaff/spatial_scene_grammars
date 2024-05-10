@@ -18,14 +18,14 @@ from pydrake.all import (
     AngleAxis,
     BasicVector,
     BodyIndex,
-    ConnectMeshcatVisualizer,
+    # ConnectMeshcatVisualizer,
     CoulombFriction,
     DiagramBuilder,
     ExternallyAppliedSpatialForce,
     LeafSystem,
     InverseKinematics,
     MeshcatVisualizer,
-    MinimumDistanceConstraint,
+    MinimumDistanceUpperBoundConstraint,
     ModelInstanceIndex,
     MultibodyPlant,
     SpatialInertia,
@@ -305,7 +305,8 @@ def compile_scene_tree_clearance_geometry_to_mbp_and_sg(scene_tree, timestep=0.0
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=timestep))
     parser = Parser(mbp)
-    parser.package_map().PopulateFromEnvironment("ROS_PACKAGE_PATH")
+    # parser.package_map().PopulateFromEnvironment("ROS_PACKAGE_PATH")
+    parser.package_map().PopulateFromRosPackagePath()
     world_body = mbp.world_body()
     free_body_poses = []
     # For generating colors.
@@ -363,7 +364,7 @@ def build_nonpenetration_constraint(mbp, mbp_context_in_diagram, signed_distance
     ''' Given an MBP/SG pair and a signed distance threshold, returns a constraint
     function that takes a context and returns whether the MBP/SG in that configuration
     has all bodies farther than the given threshold. '''
-    return MinimumDistanceConstraint(mbp, signed_distance_threshold, mbp_context_in_diagram)
+    return MinimumDistanceUpperBoundConstraint(mbp, signed_distance_threshold, mbp_context_in_diagram)
 
 def get_collisions(mbp, mbp_context_in_diagram):
     # Essentially the same logic as in ik/MinimumDistanceConstraint's distances evaluation.
@@ -424,7 +425,8 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001):
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=timestep))
     parser = Parser(mbp)
-    parser.package_map().PopulateFromEnvironment("ROS_PACKAGE_PATH")
+    # parser.package_map().PopulateFromEnvironment("ROS_PACKAGE_PATH")
+    parser.package_map().PopulateFromRosPackagePath()
     world_body = mbp.world_body()
 
     node_to_free_body_ids_map = {}
@@ -487,9 +489,9 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001):
             # Handle adding each model from sdf/urdf.
             if has_models:
                 for local_tf, model_path, root_body_name, q0_dict in phys_geom_info.model_paths:
-                    model_id = parser.AddModelFromFile(
-                        resolve_catkin_package_path(parser.package_map(), model_path),
-                        node.name + "::" "model_%d" % len(node_model_ids))
+                    parser.SetAutoRenaming(True)
+                    model_id = parser.AddModels(
+                        resolve_catkin_package_path(parser.package_map(), model_path))[0]
                     node_model_ids.append(model_id)
                     if root_body_name is None:
                         root_body_ind_possibilities = mbp.GetBodyIndices(model_id)
@@ -555,7 +557,7 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     prog.AddQuadraticErrorCost(np.eye(nq), q0, q_dec)
     # Nonpenetration constraint.
     
-    ik.AddMinimumDistanceConstraint(0.001)
+    ik.AddMinimumDistanceUpperBoundConstraint(0.001, 0.0001)
     # Other requested constraints.
     
     for constraint in constraints:
@@ -677,7 +679,7 @@ def rejection_sample_structure_to_feasibility(
     q_dec = ik.q()
     prog = ik.prog()
     # Nonpenetration constraint.
-    ik.AddMinimumDistanceConstraint(0.001)
+    ik.AddMinimumDistanceUpperBoundConstraint(0.001, 0.0001)
     # Other requested constraints.
     for constraint in constraints:
         constraint.add_to_ik_prog(tree, ik, mbp, mbp_context, node_to_free_body_ids_map)
@@ -724,9 +726,9 @@ def simulate_scene_tree(scene_tree, T, timestep=0.001, target_realtime_rate=1.0,
         scene_tree, timestep=timestep)
     mbp.Finalize()
 
-    if meshcat:
-        visualizer = ConnectMeshcatVisualizer(builder, scene_graph,
-            zmq_url=meshcat)
+    # if meshcat:
+    #     visualizer = ConnectMeshcatVisualizer(builder, scene_graph,
+    #         zmq_url=meshcat)
 
     diagram = builder.Build()
     diag_context = diagram.CreateDefaultContext()
