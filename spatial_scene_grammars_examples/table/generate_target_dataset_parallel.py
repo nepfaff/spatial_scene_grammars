@@ -125,8 +125,7 @@ def main():
     # Produce dataset by sampling a bunch of environments.
     # Try to collect a target number of examples, and save them out
     with Pool(processes=processes) as pool:
-        results = pool.map_async(sample_and_save, range(N))
-        trees = results.get()
+        trees = pool.map(sample_and_save, range(N))
 
     print("Finished sampling, saving trees...")
     for tree in trees:
