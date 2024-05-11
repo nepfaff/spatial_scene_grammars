@@ -132,14 +132,13 @@ def main():
     # Try to collect a target number of examples, and save them out
     num_chunks = N // 100
     chunks = np.split(np.array(list(range(N))), num_chunks)
-    trees = []
     for chunk in chunks:
         with Pool(processes=processes) as pool:
-            trees += pool.map(partial(sample_and_save, grammar, constraints), chunk)
+            trees = pool.map(partial(sample_and_save, grammar, constraints), chunk)
 
-    print("Finished sampling, saving trees...")
-    for tree in trees:
-        save_tree(tree, dataset_save_file)
+            print("Saving trees...")
+            for tree in trees:
+                save_tree(tree, dataset_save_file)
 
     print(
         f"Generating dataset of {N} samples took {timedelta(seconds=time.time()-start)}"
