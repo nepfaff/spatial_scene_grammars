@@ -1,16 +1,20 @@
+import argparse
 import pickle
 from typing import List
 
 import numpy as np
+from tqdm import tqdm
 
 from spatial_scene_grammars.drake_interop import PhysicsGeometryInfo
 from spatial_scene_grammars.nodes import Node
 from spatial_scene_grammars.scene_grammar import SceneTree
 
 
-def main():
+def main(dataset_pickle_path: str):
+    assert dataset_pickle_path.endswith(".pickle")
+
     target_dataset_trees: List[SceneTree] = []
-    with open("target_dataset_examples.pickle", "rb") as f:
+    with open(dataset_pickle_path, "rb") as f:
         while 1:
             try:
                 target_dataset_trees.append(pickle.load(f))
@@ -22,7 +26,7 @@ def main():
     ]
 
     observed_node_data: List[List[dict]] = []
-    for nodes in observed_nodes:
+    for nodes in tqdm(observed_nodes):
         data = []
         for node in nodes:
             translation = node.translation
@@ -62,9 +66,20 @@ def main():
 
         observed_node_data.append(data)
 
-    with open("dimsum_dataset_dict_form.pickle", "wb") as f:
+    print(f"Dataset has {len(observed_node_data)} examples.")
+
+    save_path = dataset_pickle_path.replace(".pickle", "_dict_form.pickle")
+    with open(save_path, "wb") as f:
         pickle.dump(observed_node_data, f)
+    print(f"Saved dataset in dictionary form to {save_path}.")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "dataset_pickle_path",
+        type=str,
+        help="Path to the dataset pickle file to extract the dataset from.",
+    )
+    args = parser.parse_args()
+    main(args.dataset_pickle_path)
