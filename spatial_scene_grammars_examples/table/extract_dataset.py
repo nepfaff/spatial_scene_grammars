@@ -10,23 +10,27 @@ from spatial_scene_grammars.nodes import Node
 from spatial_scene_grammars.scene_grammar import SceneTree
 
 
-def main(dataset_pickle_path: str):
+def main(dataset_pickle_path: str, verbose: bool):
     assert dataset_pickle_path.endswith(".pickle")
 
     target_dataset_trees: List[SceneTree] = []
+
+    pbar = tqdm(desc="Loading scenes")
     with open(dataset_pickle_path, "rb") as f:
         while 1:
             try:
                 target_dataset_trees.append(pickle.load(f))
+                pbar.update(1)
             except EOFError:
                 break
+    pbar.close()
 
     observed_nodes: List[List[Node]] = [
         tree.get_observed_nodes() for tree in target_dataset_trees
     ]
 
     observed_node_data: List[List[dict]] = []
-    for nodes in tqdm(observed_nodes):
+    for nodes in tqdm(observed_nodes, desc="Processing scenes"):
         data = []
         for node in nodes:
             translation = node.translation
@@ -45,7 +49,7 @@ def main(dataset_pickle_path: str):
             assert np.allclose(
                 transform[:3, :3], np.eye(3)
             ), f"Expected identity rotation, got\n{transform[:3,:3]}"
-            if not np.allclose(transform[:3, 3], 0):
+            if not np.allclose(transform[:3, 3], 0) and verbose:
                 print(
                     f"Warning: Got non-zero translation of {transform[:3, 3]} for "
                     + f"{model_path}!"
@@ -81,5 +85,8 @@ if __name__ == "__main__":
         type=str,
         help="Path to the dataset pickle file to extract the dataset from.",
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="Print more information."
+    )
     args = parser.parse_args()
-    main(args.dataset_pickle_path)
+    main(args.dataset_pickle_path, args.verbose)
