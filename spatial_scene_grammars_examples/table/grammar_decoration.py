@@ -2,22 +2,18 @@ import glob
 import os
 from functools import lru_cache
 
+import pydrake
+import pydrake.geometry as pydrake_geom
 import torch
+from pydrake.all import RigidTransform, RollPitchYaw
+
+from spatial_scene_grammars.constraints import *
+from spatial_scene_grammars.drake_interop import *
 from spatial_scene_grammars.nodes import *
 from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.scene_grammar import *
-from spatial_scene_grammars.drake_interop import *
-from spatial_scene_grammars.constraints import *
-
-
-import pydrake
-import pydrake.geometry as pydrake_geom
-from pydrake.all import (
-    RollPitchYaw,
-    RigidTransform
-)
-
 from spatial_scene_grammars_examples.table.grammar import *
+
 
 class DumplingDecoration(TerminalNode):
     def __init__(self, tf):

@@ -41,7 +41,6 @@ from pydrake.all import (  # ConnectMeshcatVisualizer,
 )
 from pydrake.common.cpp_param import List as DrakeBindingList
 
-
 def torch_tf_to_drake_tf(tf):
     return RigidTransform(tf.cpu().detach().numpy())
 
@@ -544,7 +543,7 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     
     if nq == 0:
         logging.warn("Generated MBP had no positions.")
-        return tree
+        return None
     
     # Set up projection NLP.
     ik = InverseKinematics(mbp, mbp_context)
@@ -593,7 +592,12 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     if do_forward_sim:
         sim = Simulator(diagram, diagram_context)
         sim.set_target_realtime_rate(1000.)
-        sim.AdvanceTo(T)
+
+        try:
+            sim.AdvanceTo(T)
+        except:
+            logging.warn("Forward sim failed.")
+            return None
         
     # Reload poses back into tree
     free_bodies = mbp.GetFloatingBaseBodies()

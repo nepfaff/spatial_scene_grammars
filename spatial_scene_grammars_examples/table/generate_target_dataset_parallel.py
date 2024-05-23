@@ -3,8 +3,6 @@ import pickle
 import time
 from multiprocessing import Pool
 
-import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -23,7 +21,6 @@ from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
 from spatial_scene_grammars_examples.table.grammar import *
-from spatial_scene_grammars_examples.table.grammar_decoration import *
 
 
 def sample_realistic_scene(
@@ -98,35 +95,11 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def replace_lids(tree, p=0.8):
-    """
-    Replace lids with Null nodes with probability p. This enables us to see the food
-    when decorating the scenes.
-    """
-    to_remove = [n for n in tree if isinstance(n, SteamerTop)]
-    for node in to_remove:
-        if np.random.random() <= p:
-            parent = tree.get_parent(node)
-            tree.remove_node(node)
-            replacement_child = Null(tf=parent.tf)
-            replacement_child.rule_k = 2
-            tree.add_edge(parent, replacement_child)
-    return tree
-
-
 def sample_and_save(grammar, constraints, discard_arg=None):
     while True:
         tree, _ = sample_realistic_scene(grammar, constraints)
         if tree is not None:
             return tree
-
-
-def decorate_tree(tree):
-    decorated_tree = deepcopy(tree)
-    decorated_tree = replace_lids(decorated_tree)
-    decorated_tree = apply_decoration_rules_to_tree(decorated_tree, decoration_mapping)
-    projected_tree = project_tree_to_feasibility(decorated_tree, do_forward_sim=True)
-    return projected_tree
 
 
 def save_tree(tree, dataset_save_file):
@@ -139,18 +112,13 @@ def save_tree(tree, dataset_save_file):
 
 def main():
     dataset_save_file = "dimsum_withStackConstraints_10k.pickle"
-    decorated_dataset_save_file = "dimsum_decorated_withStackConstraints_10k.pickle"
     N = 10000
     processes = 20
-    decorate_scenes = True  # If true, generate a second dataset with decorated scenes
 
     num_chunks = N // 100
 
     # Check if file already exists
     assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
-    assert not os.path.exists(
-        decorated_dataset_save_file
-    ), "Decorate dataset file already exists!"
 
     start = time.time()
 
@@ -172,10 +140,6 @@ def main():
         for _ in tqdm(range(N), desc="Generating dataset"):
             tree = sample_and_save(grammar, constraints)
             save_tree(tree, dataset_save_file)
-
-            if decorate_scenes:
-                decorated_tree = decorate_tree(tree)
-                save_tree(decorated_tree, decorated_dataset_save_file)
     else:
         chunks = np.split(np.array(list(range(N))), num_chunks)
         for chunk in tqdm(chunks, desc="Generating dataset"):
@@ -185,11 +149,6 @@ def main():
                 print("Saving trees...")
                 for tree in trees:
                     save_tree(tree, dataset_save_file)
-
-                if decorate_scenes:
-                    decorated_trees = pool.map(decorate_tree, trees)
-                    for tree in decorated_trees:
-                        save_tree(tree, decorated_dataset_save_file)
 
     print(
         f"Generating dataset of {N} samples took {timedelta(seconds=time.time()-start)}"
