@@ -19,7 +19,13 @@ def main(dataset_pickle_path: str, verbose: bool):
     with open(dataset_pickle_path, "rb") as f:
         while 1:
             try:
-                target_dataset_trees.append(pickle.load(f))
+                tree =  pickle.load(f)
+                if isinstance(tree, SceneTree):
+                    target_dataset_trees.append(tree)
+                elif isinstance(tree, tuple):
+                    target_dataset_trees.append(tree[0])
+                else:
+                    raise ValueError(f"Unexpected type {type(tree)}")
                 pbar.update(1)
             except EOFError:
                 break
