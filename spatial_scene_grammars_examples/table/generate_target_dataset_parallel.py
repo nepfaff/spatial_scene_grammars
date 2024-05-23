@@ -130,6 +130,9 @@ def decorate_tree(tree):
 
 
 def save_tree(tree, dataset_save_file):
+    if tree is None:
+        print("Tree is None, skipping save.")
+        return
     with open(dataset_save_file, "a+b") as f:
         pickle.dump(tree, f)
 
