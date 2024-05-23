@@ -25,6 +25,7 @@ from spatial_scene_grammars.visualization import *
 from spatial_scene_grammars_examples.table.grammar import *
 from spatial_scene_grammars_examples.table.grammar_decoration import *
 
+
 def sample_realistic_scene(
     grammar, constraints, seed=None, skip_physics_constraints=False
 ):
@@ -123,12 +124,8 @@ def sample_and_save(grammar, constraints, discard_arg=None):
 def decorate_tree(tree):
     decorated_tree = deepcopy(tree)
     decorated_tree = replace_lids(decorated_tree)
-    decorated_tree = apply_decoration_rules_to_tree(
-        decorated_tree, decoration_mapping
-    )
-    projected_tree = project_tree_to_feasibility(
-        decorated_tree, do_forward_sim=True
-    )
+    decorated_tree = apply_decoration_rules_to_tree(decorated_tree, decoration_mapping)
+    projected_tree = project_tree_to_feasibility(decorated_tree, do_forward_sim=True)
     return projected_tree
 
 
@@ -148,6 +145,9 @@ def main():
 
     # Check if file already exists
     assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
+    assert not os.path.exists(
+        decorated_dataset_save_file
+    ), "Decorate dataset file already exists!"
 
     start = time.time()
 
