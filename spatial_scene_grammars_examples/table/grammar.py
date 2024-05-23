@@ -483,7 +483,7 @@ class ObjectSpacingConstraint(PoseConstraint):
                     and not isinstance(node, FirstChopstick)
                     and not isinstance(node, SecondChopstick)]
             if len(objs) <= 1:
-                print("no objects")
+                # print("no objects")
                 continue
             xys = torch.stack([obj.translation[:2] for obj in objs], axis=0)
             keepout_dists = torch.tensor([obj.KEEPOUT_RADIUS for obj in objs])

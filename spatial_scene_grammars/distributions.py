@@ -65,10 +65,10 @@ class NormalizeWithPseudoInverse(torch.distributions.transforms.Transform):
         return y
 
     def log_abs_det_jacobian(self, x, y, intermediates=None):
-        global normalize_logabsdet_warned
-        if not normalize_logabsdet_warned:
-            logging.warning("NormalizeWithPseudoInverse LogAbsDet is super sketchy")
-            normalize_logabsdet_warned = True
+        # global normalize_logabsdet_warned
+        # if not normalize_logabsdet_warned:
+        #     logging.warning("NormalizeWithPseudoInverse LogAbsDet is super sketchy")
+        #     normalize_logabsdet_warned = True
         return -(x*x).sum()
 
     def with_cache(self, cache_size=1):

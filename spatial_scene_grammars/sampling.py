@@ -432,7 +432,8 @@ def do_fixed_structure_hmc_with_constraint_penalties(
             print("Initial values keys: ", initial_values.keys())
             raise ValueError("%s not in trace keys" % key)
     
-    print("Initial trace log prob: ", trace.log_prob_sum())
+    if verbose > 0:
+        print("Initial trace log prob: ", trace.log_prob_sum())
     # If I let MCMC auto-tune its step size, it seems to do well,
     # but sometimes seems to get lost, and then gets stuck with big step size and
     # zero acceptances.
@@ -450,26 +451,28 @@ def do_fixed_structure_hmc_with_constraint_penalties(
         raise NotImplementedError(kernel_type)
         
     # Get MBP for viz
-    if zmq_url is not None:
-        builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = compile_scene_tree_to_mbp_and_sg(scene_tree)
-        mbp.Finalize()
-        # visualizer = ConnectMeshcatVisualizer(builder, sg,
-        #     zmq_url=zmq_url, prefix=prefix)
-        diagram = builder.Build()
-        diagram_context = diagram.CreateDefaultContext()
-        mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
-        # vis_context = diagram.GetMutableSubsystemContext(visualizer, diagram_context)
-        # visualizer.load()
-        def hook_fn(kernel, samples, stage, i):
-            # Set MBP context to 
-            for node, body_ids in node_to_free_body_ids_map.items():
-                for body_id in body_ids:
-                    mbp.SetFreeBodyPose(mbp_context, mbp.get_body(body_id), torch_tf_to_drake_tf(node.tf))
-            diagram.ForcedPublish(diagram_context)
-            draw_scene_tree_structure_meshcat(scene_tree, zmq_url=zmq_url,  prefix=prefix + "/structure", delete=False, **structure_vis_kwargs)
-            time.sleep(0.1)
-    else:
-        hook_fn = None
+    # if zmq_url is not None:
+    #     builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = compile_scene_tree_to_mbp_and_sg(scene_tree)
+    #     mbp.Finalize()
+    #     # visualizer = ConnectMeshcatVisualizer(builder, sg,
+    #     #     zmq_url=zmq_url, prefix=prefix)
+    #     diagram = builder.Build()
+    #     diagram_context = diagram.CreateDefaultContext()
+    #     mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
+    #     # vis_context = diagram.GetMutableSubsystemContext(visualizer, diagram_context)
+    #     # visualizer.load()
+    #     def hook_fn(kernel, samples, stage, i):
+    #         # Set MBP context to 
+    #         for node, body_ids in node_to_free_body_ids_map.items():
+    #             for body_id in body_ids:
+    #                 mbp.SetFreeBodyPose(mbp_context, mbp.get_body(body_id), torch_tf_to_drake_tf(node.tf))
+    #         diagram.ForcedPublish(diagram_context)
+    #         draw_scene_tree_structure_meshcat(scene_tree, zmq_url=zmq_url,  prefix=prefix + "/structure", delete=False, **structure_vis_kwargs)
+    #         time.sleep(0.1)
+    # else:
+    #     hook_fn = None
+
+    hook_fn = None
 
     mcmc = MCMC(
         kernel,
@@ -477,7 +480,7 @@ def do_fixed_structure_hmc_with_constraint_penalties(
         warmup_steps=min(int(num_samples/2), 50),
         num_chains=1,
         disable_progbar=(verbose==-1),
-        hook_fn=hook_fn
+        hook_fn=hook_fn,
     )
     mcmc.run()
     if verbose > 1:

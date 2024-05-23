@@ -1,26 +1,28 @@
-import matplotlib.pyplot as plt
-import networkx as nx
-import numpy as np
 import os
 import pickle
 import time
-from tqdm.notebook import tqdm
 from multiprocessing import Pool
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
 import torch
+from tqdm import tqdm
 
 torch.set_default_tensor_type(torch.DoubleTensor)
 from datetime import timedelta
+from functools import partial
+
 from spatial_scene_grammars.constraints import *
+from spatial_scene_grammars.dataset import *
 from spatial_scene_grammars.nodes import *
+from spatial_scene_grammars.parameter_estimation import *
+from spatial_scene_grammars.parsing import *
 from spatial_scene_grammars.rules import *
+from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
 from spatial_scene_grammars_examples.table.grammar import *
-from spatial_scene_grammars.parsing import *
-from spatial_scene_grammars.sampling import *
-from spatial_scene_grammars.parameter_estimation import *
-from spatial_scene_grammars.dataset import *
-from functools import partial
 
 
 def sample_realistic_scene(
@@ -31,7 +33,7 @@ def sample_realistic_scene(
     structure_constraints, pose_constraints = split_constraints(constraints)
     if len(structure_constraints) > 0:
         tree, success = rejection_sample_under_constraints(
-            grammar, structure_constraints, 1000, detach=True
+            grammar, structure_constraints, 1000, detach=True, verbose=-1
         )
         if not success:
             logging.error("Couldn't rejection sample a feasible tree config.")
@@ -51,6 +53,7 @@ def sample_realistic_scene(
         max_tree_depth=6,
         target_accept_prob=0.8,
         adapt_step_size=True,
+        verbose=-1,
         # kernel_type="HMC", num_steps=1, step_size=1E-1, adapt_step_size=False, # Langevin-ish
         structure_vis_kwargs={
             "with_triad": False,
@@ -107,10 +110,12 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_save_file = "structure_constraint_examples_1000.pickle"
-    N = 1000
+    dataset_save_file = "dimsum_noStackConstraints_10k.pickle"
+    N = 10000
     processes = 20
-    
+
+    num_chunks = N // 100
+
     # Check if file already exists
     assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
 
@@ -124,21 +129,25 @@ def main():
     constraints = [
         ObjectsOnTableConstraint(),
         ObjectSpacingConstraint(),
-        TallStackConstraint(),
-        NumStacksConstraint(),
+        # TallStackConstraint(),
+        # NumStacksConstraint(),
     ]
 
     # Produce dataset by sampling a bunch of environments.
     # Try to collect a target number of examples, and save them out
-    num_chunks = N // 100
-    chunks = np.split(np.array(list(range(N))), num_chunks)
-    for chunk in chunks:
-        with Pool(processes=processes) as pool:
-            trees = pool.map(partial(sample_and_save, grammar, constraints), chunk)
+    if processes == 1:
+        for _ in tqdm(range(N), desc="Generating dataset"):
+            tree = sample_and_save(grammar, constraints)
+            save_tree(tree, dataset_save_file)
+    else:
+        chunks = np.split(np.array(list(range(N))), num_chunks)
+        for chunk in tqdm(chunks, desc="Generating dataset"):
+            with Pool(processes=processes) as pool:
+                trees = pool.map(partial(sample_and_save, grammar, constraints), chunk)
 
-            print("Saving trees...")
-            for tree in trees:
-                save_tree(tree, dataset_save_file)
+                print("Saving trees...")
+                for tree in trees:
+                    save_tree(tree, dataset_save_file)
 
     print(
         f"Generating dataset of {N} samples took {timedelta(seconds=time.time()-start)}"

@@ -1,46 +1,46 @@
-from collections import namedtuple
 import contextlib
+import logging
+import os
+from collections import namedtuple
+
+import matplotlib.pyplot as plt
 import meshcat
 import meshcat.geometry as meshcat_geom
 import meshcat.transformations as meshcat_tf
-import matplotlib.pyplot as plt
-import logging
-import numpy as np
 import networkx as nx
-import os
-import yaml
-import torch
-
+import numpy as np
 import pydrake
-from pydrake.common.cpp_param import List as DrakeBindingList
-from pydrake.all import (
+import pydrake.geometry as pydrake_geom
+import torch
+import yaml
+from pydrake.all import (  # ConnectMeshcatVisualizer,
     AddMultibodyPlantSceneGraph,
     AngleAxis,
     BasicVector,
     BodyIndex,
-    # ConnectMeshcatVisualizer,
     CoulombFriction,
     DiagramBuilder,
     ExternallyAppliedSpatialForce,
-    LeafSystem,
     InverseKinematics,
+    LeafSystem,
     MeshcatVisualizer,
     MinimumDistanceUpperBoundConstraint,
     ModelInstanceIndex,
     MultibodyPlant,
-    SpatialInertia,
     Parser,
     RigidTransform,
     RotationMatrix,
-    SpatialForce,
     Simulator,
     SnoptSolver,
     Solve,
     SolverOptions,
+    SpatialForce,
+    SpatialInertia,
     UnitInertia,
-    Value
+    Value,
 )
-import pydrake.geometry as pydrake_geom
+from pydrake.common.cpp_param import List as DrakeBindingList
+
 
 def torch_tf_to_drake_tf(tf):
     return RigidTransform(tf.cpu().detach().numpy())
@@ -532,10 +532,10 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     mbp.Finalize()
     # Connect visualizer if requested. Wrap carefully to keep it
     # from spamming the console.
-    if zmq_url is not None:
-         with open(os.devnull, 'w') as devnull:
-            with contextlib.redirect_stdout(devnull):
-                visualizer = ConnectMeshcatVisualizer(builder, sg, zmq_url=zmq_url, prefix=prefix)
+    # if zmq_url is not None:
+    #      with open(os.devnull, 'w') as devnull:
+    #         with contextlib.redirect_stdout(devnull):
+    #             visualizer = ConnectMeshcatVisualizer(builder, sg, zmq_url=zmq_url, prefix=prefix)
     diagram = builder.Build()
     diagram_context = diagram.CreateDefaultContext()
     mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
@@ -573,18 +573,18 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     
     solver = SnoptSolver()
     options = SolverOptions()
-    logfile = "/tmp/snopt.log"
-    os.system("rm %s" % logfile)
-    options.SetOption(solver.id(), "Print file", logfile)
+    # logfile = "/tmp/snopt.log"
+    # os.system("rm %s" % logfile)
+    # options.SetOption(solver.id(), "Print file", logfile)
     options.SetOption(solver.id(), "Major feasibility tolerance", 1E-3)
     options.SetOption(solver.id(), "Major optimality tolerance", 1E-3)
     options.SetOption(solver.id(), "Major iterations limit", 300)
     result = solver.Solve(prog, None, options)
-    if not result.is_success():
-        logging.warn("Projection failed.")
-        print("Logfile: ")
-        with open(logfile) as f:
-            print(f.read())
+    # if not result.is_success():
+    #     logging.warn("Projection failed.")
+        # print("Logfile: ")
+        # with open(logfile) as f:
+        #     print(f.read())
     qf = result.GetSolution(q_dec)
     mbp.SetPositions(mbp_context, qf)
     

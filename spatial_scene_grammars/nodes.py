@@ -1,22 +1,18 @@
-from copy import deepcopy
 from collections import namedtuple
+from copy import deepcopy
+
 import numpy as np
+import pydrake
 import pyro
 import pyro.distributions as dist
-from pyro.contrib.autoname import scope
 import torch
+from pydrake.all import CoulombFriction, SpatialInertia, UnitInertia
+from pyro.contrib.autoname import scope
 from torch.distributions import constraints
 from torch.distributions.utils import clamp_probs as torch_clamp_probs
 
-from .torch_utils import ConstrainedParameter
 from .rules import *
-
-import pydrake
-from pydrake.all import (
-    CoulombFriction,
-    SpatialInertia,
-    UnitInertia
-)
+from .torch_utils import ConstrainedParameter
 
 
 # Global name store for avoiding name collisions.
