@@ -38,7 +38,7 @@ def sample_realistic_scene(
             grammar, structure_constraints, 1000, detach=True, verbose=-1
         )
         if not success:
-            logging.error("Couldn't rejection sample a feasible tree config.")
+            # logging.error("Couldn't rejection sample a feasible tree config.")
             return None, None
     else:
         tree = grammar.sample_tree(detach=True)
@@ -83,7 +83,7 @@ def sample_realistic_scene(
                 best_violation = total_violation.detach()
 
     if good_tree == None:
-        logging.error("No tree in samples satisfied constraints.")
+        # logging.error("No tree in samples satisfied constraints.")
         # print("Best total violation: %f" % best_violation)
         # print("Violations of best bad tree:")
         # for constraint in constraints:
@@ -106,6 +106,8 @@ def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30)
         if tree is not None:
             return tree
         counter += 1
+
+    print("Failed to find tree within budget!")
 
 
 def save_tree(tree, dataset_save_file):
@@ -152,7 +154,6 @@ def main():
             with Pool(processes=processes) as pool:
                 trees = pool.map(partial(sample_and_save, grammar, constraints), chunk)
 
-                print("Saving trees...")
                 for tree in tqdm(trees, desc="Saving trees"):
                     save_tree(tree, dataset_save_file)
 
