@@ -104,8 +104,8 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_load_file = "dimsum_noStackConstraints_10k.pickle"
-    decorated_dataset_save_file = "dimsum_decorated_noStackConstraints_10k.pickle"
+    dataset_load_file = "dimsum_withStackConstraints_10k.pickle"
+    decorated_dataset_save_file = "dimsum_decorated_withStackConstraints_10k.pickle"
 
     assert os.path.exists(dataset_load_file), "Dataset file doesn't exists!"
     assert not os.path.exists(

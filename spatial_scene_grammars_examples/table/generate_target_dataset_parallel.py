@@ -1,4 +1,5 @@
 import logging
+
 logging.disable(level=logging.ERROR)
 logger = logging.getLogger("root").setLevel(logging.ERROR)
 
@@ -35,7 +36,7 @@ def sample_realistic_scene(
     structure_constraints, pose_constraints = split_constraints(constraints)
     if len(structure_constraints) > 0:
         tree, success = rejection_sample_under_constraints(
-            grammar, structure_constraints, 1000, detach=True, verbose=-1
+            grammar, structure_constraints, 10000, detach=True, verbose=-1
         )
         if not success:
             # logging.error("Couldn't rejection sample a feasible tree config.")
@@ -120,12 +121,31 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_save_file = "dimsum_withStackConstraints_50k.pickle"
-    N = 50000
-    processes = 25
-
+    dataset_save_file = "dimsum_withStackConstraints_25k.pickle"
+    N = 25000
+    processes = 20
+    fixed_objects = False
+    
     # Don't change this to prevent memory issues.
     num_chunks = N // 100
+    
+    if fixed_objects:
+        fixed_object_constraints += [
+            ObjectCountConstraint(Table, 1, 1),
+            ObjectCountConstraint(PersonalPlate, 4, 4),
+            ObjectCountConstraint(Teacup, 2, 2),
+            ObjectCountConstraint(Teapot, 1, 1),
+            ObjectCountConstraint(ServingDish, 0, 0),
+            ObjectCountConstraint(SteamerBottom, 6, 6),
+            ObjectCountConstraint(SteamerTop, 1, 1),
+        ]
+    else:
+        fixed_object_constraints = [
+            TallStackConstraint(),
+            NumStacksConstraint(),
+        ]
+
+    num_chunks = N // 500
 
     # Check if file already exists
     assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
@@ -140,8 +160,7 @@ def main():
     constraints = [
         ObjectsOnTableConstraint(),
         ObjectSpacingConstraint(),
-        TallStackConstraint(),
-        NumStacksConstraint(),
+        *fixed_object_constraints,
     ]
 
     # Produce dataset by sampling a bunch of environments.
