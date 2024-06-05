@@ -123,7 +123,8 @@ def main():
     N = 50000
     processes = 25
 
-    num_chunks = N // 1000
+    # Don't change this to prevent memory issues.
+    num_chunks = N // 100
 
     # Check if file already exists
     assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
