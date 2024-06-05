@@ -20,7 +20,7 @@ except RuntimeError as e:
     logging.warn(e)
 
 import torch
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 from torch.distributions import transform_to
 # https://discuss.pytorch.org/t/runtimeerror-received-0-items-of-ancdata/4999
 torch.multiprocessing.set_sharing_strategy('file_system')

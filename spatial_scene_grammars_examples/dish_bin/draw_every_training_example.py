@@ -7,7 +7,7 @@ import time
 from tqdm.notebook import tqdm
 
 import torch
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 
 from spatial_scene_grammars.constraints import *
 from spatial_scene_grammars.nodes import *

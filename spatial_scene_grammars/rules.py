@@ -17,7 +17,7 @@ from .drake_interop import drake_tf_to_torch_tf, torch_tf_to_drake_tf
 from .distributions import UniformWithEqualityHandling, BinghamDistribution
 from .torch_utils import ConstrainedParameter
 
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 
 import pydrake
 from pydrake.all import (

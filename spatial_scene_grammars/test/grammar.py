@@ -8,7 +8,7 @@ from spatial_scene_grammars.torch_utils import ConstrainedParameter
 from spatial_scene_grammars.nodes import *
 from spatial_scene_grammars.rules import *
 
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 pyro.enable_validation(True)
 
 '''

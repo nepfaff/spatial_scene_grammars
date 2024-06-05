@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 from datetime import timedelta
 
 from spatial_scene_grammars.constraints import *

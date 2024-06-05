@@ -6,7 +6,7 @@ import pyro
 
 from spatial_scene_grammars.distributions import *
 
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 
 @pytest.fixture(params=range(10))
 def set_seed(request):

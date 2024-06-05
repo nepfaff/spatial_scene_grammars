@@ -15,7 +15,7 @@ from .grammar import *
 from torch.distributions import constraints
 
 
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 
 @pytest.fixture(params=range(3))
 def set_seed(request):

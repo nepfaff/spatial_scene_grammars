@@ -1,3 +1,7 @@
+import logging
+logging.disable(level=logging.ERROR)
+logger = logging.getLogger("root").setLevel(logging.ERROR)
+
 import os
 import pickle
 import time
@@ -7,7 +11,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-torch.set_default_tensor_type(torch.DoubleTensor)
+torch.set_default_dtype(torch.double)
 from datetime import timedelta
 from functools import partial
 
@@ -113,11 +117,11 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_save_file = "dimsum_withStackConstraints_10k.pickle"
-    N = 10000
-    processes = 20
+    dataset_save_file = "dimsum_withStackConstraints_50k.pickle"
+    N = 50000
+    processes = 25
 
-    num_chunks = N // 100
+    num_chunks = N // 1000
 
     # Check if file already exists
     assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
