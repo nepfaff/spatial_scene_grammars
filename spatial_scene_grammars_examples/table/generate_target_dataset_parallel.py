@@ -147,7 +147,7 @@ def main():
                 trees = pool.map(partial(sample_and_save, grammar, constraints), chunk)
 
                 print("Saving trees...")
-                for tree in trees:
+                for tree in tqdm(trees, desc="Saving trees"):
                     save_tree(tree, dataset_save_file)
 
     print(
