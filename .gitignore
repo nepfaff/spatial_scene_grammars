@@ -4,6 +4,5 @@ __pycache__
 *.dat
 *.ipynb_checkpoints
 .venv
-.vscode
 *.egg-info
 *.pickle
