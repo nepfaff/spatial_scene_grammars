@@ -95,11 +95,13 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def sample_and_save(grammar, constraints, discard_arg=None):
-    while True:
+def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30):
+    counter = 0
+    while counter < max_tries:
         tree, _ = sample_realistic_scene(grammar, constraints)
         if tree is not None:
             return tree
+        counter += 1
 
 
 def save_tree(tree, dataset_save_file):
