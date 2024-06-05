@@ -80,10 +80,10 @@ def sample_realistic_scene(
 
     if good_tree == None:
         logging.error("No tree in samples satisfied constraints.")
-        print("Best total violation: %f" % best_violation)
-        print("Violations of best bad tree:")
-        for constraint in constraints:
-            print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
+        # print("Best total violation: %f" % best_violation)
+        # print("Violations of best bad tree:")
+        # for constraint in constraints:
+        #     print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
         return None, None
 
     if skip_physics_constraints:
