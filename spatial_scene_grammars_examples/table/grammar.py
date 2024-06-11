@@ -479,7 +479,7 @@ class ObjectSpacingConstraint(PoseConstraint):
         all_dists = []
         for table in tables:
             objs = [node for node in scene_tree.get_children_recursive(table) if isinstance(node, TabletopObjectTypes)
-                    and not isinstance(scene_tree.get_parent(node), SteamerBottom)
+                    and not isinstance(scene_tree.get_parent(node), SteamerBottom) # Want stacked steamers to touch each other
                     and not isinstance(node, FirstChopstick)
                     and not isinstance(node, SecondChopstick)]
             if len(objs) <= 1:

@@ -145,6 +145,9 @@ class NonpenetrationConstraint(PoseConstraint):
             nhat_BA_W_torch = torch.matmul(tf_WB_torch[:3, :3], nhat_BA_B)
             depth = torch.sum((p_WCb_torch - p_WCa_torch) * nhat_BA_W_torch)
 
+            if np.abs(point_pair.depth - depth.item()) >= 1E-6:
+                import IPython; IPython.embed(header="assert")
+
             # Sanity-check that we did things right.
             assert np.abs(point_pair.depth - depth.item()) < 1E-6, "%s vs %s" % (point_pair.depth, depth.item())
             total_score += depth*10.0 # TODO Why the scaling? It's tied to my factor definition
@@ -442,7 +445,7 @@ def do_fixed_structure_hmc_with_constraint_penalties(
             init_strategy=pyro.infer.autoguide.init_to_value(values=initial_values),
             **kwargs
         )
-    elif kernel_type is "HMC":
+    elif kernel_type == "HMC":
         kernel = HMC(model,
             init_strategy=pyro.infer.autoguide.init_to_value(values=initial_values),
             **kwargs

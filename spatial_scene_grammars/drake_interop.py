@@ -419,7 +419,7 @@ def split_tree_into_containers(scene_tree):
         trees.append(expand_container_tree(scene_tree, new_tree, root))
     return trees
 
-def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001):
+def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001, return_node_model_ids=False):
     builder = DiagramBuilder()
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=timestep))
@@ -503,7 +503,8 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001):
                             model_instance=model_id)
                     body_id_to_node_map[root_body.index()] = node
                     node_tf = torch_tf_to_drake_tf(node.tf)
-                    full_model_tf = node_tf.multiply(torch_tf_to_drake_tf(local_tf))
+                    # full_model_tf = node_tf.multiply(torch_tf_to_drake_tf(local_tf))
+                    full_model_tf = node_tf # This seems to be correct, not sure for the commented out logic.
                     if phys_geom_info.fixed:
                         mbp.WeldFrames(world_body.body_frame(),
                                        root_body.body_frame(),
@@ -521,13 +522,15 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001):
                             q0_this = q0_this.reshape(joint.num_positions(), 1)
                             joint.set_default_positions(q0_this)
 
+    if return_node_model_ids:
+        return builder, mbp, scene_graph, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids
     return builder, mbp, scene_graph, node_to_free_body_ids_map, body_id_to_node_map
 
 def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_sim=False, zmq_url=None, prefix="projection", timestep=0.001, T=1.):
     # Mutates tree into tree with bodies in closest
     # nonpenetrating configuration.
-    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = \
-        compile_scene_tree_to_mbp_and_sg(tree, timestep=timestep)
+    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids = \
+        compile_scene_tree_to_mbp_and_sg(tree, timestep=timestep, return_node_model_ids=True)
     mbp.Finalize()
     # Connect visualizer if requested. Wrap carefully to keep it
     # from spamming the console.
@@ -549,16 +552,40 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     ik = InverseKinematics(mbp, mbp_context)
     q_dec = ik.q()
     prog = ik.prog()
+
     # It's always a projection, so we always have this
     # Euclidean norm error between the optimized q and
     # q0.
-    
+    # Stay close to initial positions.
     prog.AddQuadraticErrorCost(np.eye(nq), q0, q_dec)
+
+    # Add constraints for rotations to stay constant. Only want to optimize translations.
+    for model in node_model_ids:
+        body_indices = mbp.GetBodyIndices(model)
+        if len(body_indices) >1:
+            continue
+        
+        body = mbp.get_body(body_indices[0])
+        if not body.is_floating():
+            continue
+
+        q_start_idx = body.floating_positions_start()
+        model_quat_dec = q_dec[q_start_idx:q_start_idx+4]
+
+        model_q = mbp.GetPositions(mbp_context, model)
+        model_quat = model_q[:4]
+
+        prog.AddBoundingBoxConstraint(
+            model_quat, # lb
+            model_quat, # ub
+            model_quat_dec, # vars
+        )
+
+
     # Nonpenetration constraint.
-    
-    ik.AddMinimumDistanceUpperBoundConstraint(0.001, 0.0001)
+    ik.AddMinimumDistanceLowerBoundConstraint(0.001, 0.0001)
+
     # Other requested constraints.
-    
     for constraint in constraints:
         constraint.add_to_ik_prog(tree, ik, mbp, mbp_context, node_to_free_body_ids_map)
     # Initial guess, which can be slightly randomized by request.
@@ -575,18 +602,27 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     # logfile = "/tmp/snopt.log"
     # os.system("rm %s" % logfile)
     # options.SetOption(solver.id(), "Print file", logfile)
-    options.SetOption(solver.id(), "Major feasibility tolerance", 1E-3)
-    options.SetOption(solver.id(), "Major optimality tolerance", 1E-3)
-    options.SetOption(solver.id(), "Major iterations limit", 300)
+    options.SetOption(solver.id(), "Major feasibility tolerance", 1E-6)
+    options.SetOption(solver.id(), "Major optimality tolerance", 1E-6)
+    options.SetOption(solver.id(), "Major iterations limit", 10000)
+
     result = solver.Solve(prog, None, options)
-    # if not result.is_success():
-    #     logging.warn("Projection failed.")
+    if not result.is_success():
+        logging.warn("Projection failed.")
         # print("Logfile: ")
-        # with open(logfile) as f:
-        #     print(f.read())
-    qf = result.GetSolution(q_dec)
-    mbp.SetPositions(mbp_context, qf)
+
+
+    # DEBUG Logic
+    # with open(logfile) as f: log = f.read()
+    # qf = result.GetSolution(q_dec)
+    # mbp.SetPositions(mbp_context, qf)
+    # query_object = sg.get_query_output_port().Eval(sg.GetMyContextFromRoot(diagram_context))
+    # has_collisions = query_object.HasCollisions()
+    # pairs = query_object.ComputeSignedDistancePairwiseClosestPoints(max_distance=-1e-3)
+    # collision_dists = [p.distance for p in pairs]
+    # import IPython; IPython.embed(); exit()
     
+    # TODO: This is suboptimal. Ideally, we don't include rotations in the decision variables!
     # If forward sim is requested, do a quick forward sim to get to
     # a statically stable config.
     if do_forward_sim:

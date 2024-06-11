@@ -48,7 +48,7 @@ def sample_realistic_scene(
         tree,
         num_samples=25,
         subsample_step=1,
-        with_nonpenetration=False,
+        with_nonpenetration=False, # Too difficult
         zmq_url="",
         constraints=pose_constraints,
         kernel_type="NUTS",
@@ -93,10 +93,11 @@ def sample_realistic_scene(
     if skip_physics_constraints:
         return None, good_tree
 
-    feasible_tree = project_tree_to_feasibility(
-        deepcopy(good_tree), do_forward_sim=True, timestep=0.001, T=1.0
-    )
-    return feasible_tree, good_tree
+    # feasible_tree = project_tree_to_feasibility(
+    #     deepcopy(good_tree), do_forward_sim=True, timestep=0.001, T=1.0
+    # )
+    # return feasible_tree, good_tree
+    return good_tree, good_tree
 
 
 def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30):
