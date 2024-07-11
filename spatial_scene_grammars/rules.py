@@ -1,20 +1,22 @@
-from copy import deepcopy
-from collections import namedtuple
 import logging
+from collections import namedtuple
+from copy import deepcopy
+
 import numpy as np
 import pyro
 import pyro.distributions as dist
-from pyro.contrib.autoname import scope
 import torch
+from pyro.contrib.autoname import scope
+from pytorch3d.transforms.rotation_conversions import (
+    axis_angle_to_matrix,
+    matrix_to_quaternion,
+    quaternion_to_axis_angle,
+    quaternion_to_matrix,
+)
 from torch.distributions import constraints
 
-from pytorch3d.transforms.rotation_conversions import (
-    quaternion_to_matrix, matrix_to_quaternion,
-    axis_angle_to_matrix, quaternion_to_axis_angle
-)
-
+from .distributions import BinghamDistribution, UniformWithEqualityHandling
 from .drake_interop import drake_tf_to_torch_tf, torch_tf_to_drake_tf
-from .distributions import UniformWithEqualityHandling, BinghamDistribution
 from .torch_utils import ConstrainedParameter
 
 torch.set_default_dtype(torch.double)
@@ -24,15 +26,15 @@ from pydrake.all import (
     AddBilinearProductMcCormickEnvelopeSos2,
     AngleAxis,
     AngleAxis_,
-    Expression,
     CoulombFriction,
+    Expression,
     RigidTransform,
+    RollPitchYaw,
     RotationMatrix,
     RotationMatrix_,
-    RollPitchYaw,
     SpatialInertia,
     UnitInertia,
-    Variable
+    Variable,
 )
 
 # Add a new rule checklist:
@@ -46,23 +48,24 @@ from pydrake.all import (
 
 SiteValue = namedtuple("SiteValue", ["fn", "value"])
 
-class ProductionRule():
-    '''
-        Rule by which a child node's pose is derived
-        from its parent.
 
-        Produced by mixing together two sub-rules that
-            control the xyz and rotation relationships.
+class ProductionRule:
+    """
+    Rule by which a child node's pose is derived
+    from its parent.
 
-        Groups together a few interfaces that share the
-        same undlerying math:
-            - Sample the child given the parent.
-            - Compute the log-prob of the child given the parent.
-            - Add mathematical programming constraints reflecting
-              the child being feasible w.r.t. the parent.
-            - Add mathematical programming costs reflecting the
-              score of the child relative to the parent.        
-    '''
+    Produced by mixing together two sub-rules that
+        control the xyz and rotation relationships.
+
+    Groups together a few interfaces that share the
+    same undlerying math:
+        - Sample the child given the parent.
+        - Compute the log-prob of the child given the parent.
+        - Add mathematical programming constraints reflecting
+          the child being feasible w.r.t. the parent.
+        - Add mathematical programming costs reflecting the
+          score of the child relative to the parent.
+    """
 
     def __init__(self, child_type, xyz_rule, rotation_rule):
         assert isinstance(xyz_rule, XyzProductionRule)
@@ -83,7 +86,7 @@ class ProductionRule():
         tf = torch.empty(4, 4)
         tf[:3, :3] = rotmat[:, :]
         tf[:3, 3] = xyz[:]
-        tf[3, :] = torch.tensor([0., 0., 0., 1.])
+        tf[3, :] = torch.tensor([0.0, 0.0, 0.0, 1.0])
         child.tf = tf
         return child
 
@@ -103,16 +106,14 @@ class ProductionRule():
         # Node definitions are set up.
         return (
             self.xyz_rule.get_parameter_prior(),
-            self.rotation_rule.get_parameter_prior()
+            self.rotation_rule.get_parameter_prior(),
         )
+
     @property
     def parameters(self):
         # Returns a tuple of the parameters dicts for the
         # xyz and rotation rules.
-        return (
-            self.xyz_rule.parameters,
-            self.rotation_rule.parameters
-        )
+        return (self.xyz_rule.parameters, self.rotation_rule.parameters)
 
     @parameters.setter
     def parameters(self, parameters):
@@ -130,24 +131,45 @@ class ProductionRule():
         # for scoring.)
         return {
             **self.xyz_rule.get_site_values(parent, child),
-            **self.rotation_rule.get_site_values(parent, child)
+            **self.rotation_rule.get_site_values(parent, child),
         }
         raise NotImplementedError()
 
-    def encode_constraint(self, prog, xyz_optim_params, rot_optim_params, parent, child, max_scene_extent_in_any_dir):
-        ''' Given a MathematicalProgram prog, parameter dictionaries for
+    def encode_constraint(
+        self,
+        prog,
+        xyz_optim_params,
+        rot_optim_params,
+        parent,
+        child,
+        max_scene_extent_in_any_dir,
+    ):
+        """Given a MathematicalProgram prog, parameter dictionaries for
         the xyz and rotation rules matching their parameters (but possibly valued
         by decision variables or fixed values for those parameters), and parent and
         child nodes that have been given R_optim and t_optim decision variable members,
         encodes the constraints implied by this rule into the optimization.
 
         Returns the return value of encoding the rotation rule (i.e. whether the rotation
-        was fully constrained by the constraints).'''
-        self.xyz_rule.encode_constraint(prog, xyz_optim_params, parent, child, max_scene_extent_in_any_dir)
-        return self.rotation_rule.encode_constraint(prog, rot_optim_params, parent, child, max_scene_extent_in_any_dir)
+        was fully constrained by the constraints)."""
+        self.xyz_rule.encode_constraint(
+            prog, xyz_optim_params, parent, child, max_scene_extent_in_any_dir
+        )
+        return self.rotation_rule.encode_constraint(
+            prog, rot_optim_params, parent, child, max_scene_extent_in_any_dir
+        )
 
-    def encode_cost(self, prog, xyz_optim_params, rot_optim_params, active, parent, child, max_scene_extent_in_any_dir):
-        ''' Given a MathematicalProgram prog, parameter dictionaries for
+    def encode_cost(
+        self,
+        prog,
+        xyz_optim_params,
+        rot_optim_params,
+        active,
+        parent,
+        child,
+        max_scene_extent_in_any_dir,
+    ):
+        """Given a MathematicalProgram prog, parameter dictionaries for
         the xyz and rotation rules matching their parameters (but possibly valued
         by decision variables or fixed values for those parameters), a binary variable
         indicating whether the child is active, and parent and child nodes that have
@@ -157,22 +179,31 @@ class ProductionRule():
 
         Active will be a decision variable if the prog is going to be a MICP, and
         True if we're in an NLP context. TODO(gizatt) Refactor these cost+constraint
-        encoders in a more sensible way with a less obtuse interface. '''
-        self.xyz_rule.encode_cost(prog, xyz_optim_params, active, parent, child, max_scene_extent_in_any_dir)
-        self.rotation_rule.encode_cost(prog, rot_optim_params, active, parent, child, max_scene_extent_in_any_dir)
+        encoders in a more sensible way with a less obtuse interface."""
+        self.xyz_rule.encode_cost(
+            prog, xyz_optim_params, active, parent, child, max_scene_extent_in_any_dir
+        )
+        self.rotation_rule.encode_cost(
+            prog, rot_optim_params, active, parent, child, max_scene_extent_in_any_dir
+        )
+
 
 ## XYZ Production rules
-class XyzProductionRule():
-    '''
-        Instructions for how to produce a child's position
-        from the parent.
-    '''
+class XyzProductionRule:
+    """
+    Instructions for how to produce a child's position
+    from the parent.
+    """
+
     def __init__(self, fix_parameters=False):
         self.fix_parameters = fix_parameters
+
     def sample_xyz(self, parent):
         raise NotImplementedError()
+
     def score_child(self, parent, child):
         raise NotImplementedError()
+
     def get_site_values(self, parent, child):
         raise NotImplementedError()
 
@@ -181,6 +212,7 @@ class XyzProductionRule():
         # Should return a dict of pyro Dists with supports matching the parameter
         # space of the Rule subclass being used.
         raise NotImplementedError("Child rule should implement parameter priors.")
+
     @property
     def parameters(self):
         # Should return a dict of torch Tensors representing the current
@@ -192,6 +224,7 @@ class XyzProductionRule():
             "Child class should implement parameters getter. Users should"
             " never have to do this."
         )
+
     @parameters.setter
     def parameters(self, parameters):
         raise NotImplementedError(
@@ -199,74 +232,107 @@ class XyzProductionRule():
             " never have to do this."
         )
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
-        ''' Given a MathematicalProgram prog, parameter dictionaries for this
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
+        """Given a MathematicalProgram prog, parameter dictionaries for this
         rule type, and parent and child nodes that have been given R_optim and
         t_optim decision variable members, encodes the constraints implied by
-        this rule into the optimization program. '''
-        raise NotImplementedError()
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
-        ''' Given a MathematicalProgram prog, parameter dictionaries for this
-        rule type, and parent and child nodes that have been given R_optim and
-        t_optim decision variable members, adds the negative log probability
-        of this rule given the parent and child to the program.'''
+        this rule into the optimization program."""
         raise NotImplementedError()
 
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        """Given a MathematicalProgram prog, parameter dictionaries for this
+        rule type, and parent and child nodes that have been given R_optim and
+        t_optim decision variable members, adds the negative log probability
+        of this rule given the parent and child to the program."""
+        raise NotImplementedError()
+
+
 class SamePositionRule(XyzProductionRule):
-    ''' Child Xyz is identically parent xyz. '''
+    """Child Xyz is identically parent xyz. Offset is in parent frame."""
+
     def __init__(self, offset=torch.zeros(3), **kwargs):
         self.offset = offset
         super().__init__(**kwargs)
 
     def sample_xyz(self, parent):
         return parent.translation + torch.matmul(parent.rotation, self.offset)
+
     def score_child(self, parent, child):
         if torch.allclose(
+            parent.translation + torch.matmul(parent.rotation, self.offset),
+            child.translation,
+            atol=1e-3,
+        ):
+            return torch.tensor(0.0)
+        logging.warning(
+            "SamePositionRule mismatch (%s->%s): %s vs %s"
+            % (
+                parent,
+                child,
                 parent.translation + torch.matmul(parent.rotation, self.offset),
-                child.translation, atol=1E-3):
-            return torch.tensor(0.)
-        logging.warning("SamePositionRule mismatch (%s->%s): %s vs %s" % (parent, child, parent.translation + torch.matmul(parent.rotation, self.offset), child.translation))
+                child.translation,
+            )
+        )
         return torch.tensor(-np.inf)
+
     def get_site_values(self, parent, child):
         return {}
 
     @classmethod
     def get_parameter_prior(cls):
         return {}
+
     @property
     def parameters(self):
         return {}
+
     @parameters.setter
     def parameters(self, parameters):
         if len(parameters.keys()) > 0:
             raise ValueError("SamePositionRule has no parameters.")
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # Constrain child translation to be equal to parent translation.
         t = parent.R_optim.dot(self.offset.detach().numpy())
         for k in range(3):
-            prog.AddLinearEqualityConstraint(child.t_optim[k] == parent.t_optim[k] + t[k])
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+            prog.AddLinearEqualityConstraint(
+                child.t_optim[k] == parent.t_optim[k] + t[k]
+            )
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         pass
 
+
 class WorldFrameBBoxRule(XyzProductionRule):
-    ''' Child xyz is uniformly chosen in [center, width] in world frame,
-        without relationship to the parent.'''
+    """Child xyz is uniformly chosen in [center, width] in world frame,
+    without relationship to the parent."""
+
     @classmethod
     def from_bounds(cls, lb, ub):
         assert all(ub >= lb)
-        return cls(center=(ub + lb) / 2., width=ub - lb)
+        return cls(center=(ub + lb) / 2.0, width=ub - lb)
+
     def __init__(self, center, width):
         assert isinstance(center, torch.Tensor) and center.shape == (3,)
         assert isinstance(width, torch.Tensor) and width.shape == (3,)
         self.parameters = {"center": center, "width": width}
-        
+
         super().__init__()
 
     def sample_xyz(self, parent):
         return pyro.sample("WorldFrameBBoxRule_xyz", self.xyz_dist)
+
     def score_child(self, parent, child):
         return self.xyz_dist.log_prob(child.translation).sum()
+
     def get_site_values(self, parent, child):
         return {"WorldFrameBBoxRule_xyz": SiteValue(self.xyz_dist, child.translation)}
 
@@ -276,76 +342,93 @@ class WorldFrameBBoxRule(XyzProductionRule):
         # and Uniform-distributed width on some reasonable range.
         return {
             "center": dist.Normal(torch.zeros(3), torch.ones(3)),
-            "width": dist.Uniform(torch.zeros(3), torch.ones(3)*10.)
+            "width": dist.Uniform(torch.zeros(3), torch.ones(3) * 10.0),
         }
+
     @property
     def parameters(self):
         # Parameters of a BBoxRule is the *center* and *width*,
         # since those are easiest to constrain: width should be
         # >= 0.
-        return {
-            "center": self.center,
-            "width": self.width
-        }
+        return {"center": self.center, "width": self.width}
+
     @parameters.setter
     def parameters(self, parameters):
         self.center = parameters["center"]
         self.width = parameters["width"]
         self.xyz_dist = UniformWithEqualityHandling(self.lb, self.ub)
+
     @property
     def lb(self):
-        return self.center - self.width / 2.
+        return self.center - self.width / 2.0
+
     @property
     def ub(self):
-        return self.center + self.width / 2.
+        return self.center + self.width / 2.0
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # Child translation should be within the translation bounds in
         # world frame.
-        lb_world = optim_params["center"] - optim_params["width"]/2.
-        ub_world = optim_params["center"] + optim_params["width"]/2.
+        lb_world = optim_params["center"] - optim_params["width"] / 2.0
+        ub_world = optim_params["center"] + optim_params["width"] / 2.0
         # X should be within a half-bound-width of the centerl.
         for k in range(3):
             prog.AddLinearConstraint(child.t_optim[k] >= lb_world[k])
             prog.AddLinearConstraint(child.t_optim[k] <= ub_world[k])
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
-        lb_world = optim_params["center"] - optim_params["width"]/2.
-        ub_world = optim_params["center"] + optim_params["width"]/2.
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        lb_world = optim_params["center"] - optim_params["width"] / 2.0
+        ub_world = optim_params["center"] + optim_params["width"] / 2.0
         # log prob = 1 / width on each axis
         total_ll = -sum(ub_world - lb_world)
         return -total_ll * active
 
 
 class WorldFrameBBoxOffsetRule(WorldFrameBBoxRule):
-    ''' Child xyz is parent xyz + a uniform offset in [lb, ub]
-        in world frame.
+    """Child xyz is parent xyz + a uniform offset in [lb, ub]
+    in world frame.
 
-        TODO(gizatt) Add support for lb = ub; this requires
-        special wrapping around Uniform to handle the equality
-        cases as Delta distributions.'''
+    TODO(gizatt) Add support for lb = ub; this requires
+    special wrapping around Uniform to handle the equality
+    cases as Delta distributions."""
+
     def sample_xyz(self, parent):
         offset = pyro.sample("WorldFrameBBoxOffsetRule_xyz", self.xyz_dist)
         return parent.translation + offset
+
     def score_child(self, parent, child):
         xyz_offset = child.translation - parent.translation
         return self.xyz_dist.log_prob(xyz_offset).sum()
-    def get_site_values(self, parent, child):
-        return {"WorldFrameBBoxOffsetRule_xyz": SiteValue(self.xyz_dist, child.translation - parent.translation)}
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def get_site_values(self, parent, child):
+        return {
+            "WorldFrameBBoxOffsetRule_xyz": SiteValue(
+                self.xyz_dist, child.translation - parent.translation
+            )
+        }
+
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # Child translation should be within the translation bounds in
         # world frame.
-        lb_world = optim_params["center"] - optim_params["width"]/2. + parent.t_optim
-        ub_world = optim_params["center"] + optim_params["width"]/2. + parent.t_optim
+        lb_world = optim_params["center"] - optim_params["width"] / 2.0 + parent.t_optim
+        ub_world = optim_params["center"] + optim_params["width"] / 2.0 + parent.t_optim
         # X should be within a half-bound-width of the centerl.
         for k in range(3):
             prog.AddLinearConstraint(child.t_optim[k] >= lb_world[k])
             prog.AddLinearConstraint(child.t_optim[k] <= ub_world[k])
+
     # Uses encode_cost implementation in WorldFrameBBoxRule
 
 
 class WorldFrameGaussianOffsetRule(XyzProductionRule):
-    ''' Child xyz is diagonally-Normally distributed relative to parent in world frame.'''
+    """Child xyz is diagonally-Normally distributed relative to parent in world frame."""
+
     def __init__(self, mean, variance, **kwargs):
         assert isinstance(mean, torch.Tensor) and mean.shape == (3,)
         assert isinstance(variance, torch.Tensor) and variance.shape == (3,)
@@ -353,85 +436,138 @@ class WorldFrameGaussianOffsetRule(XyzProductionRule):
         super().__init__(**kwargs)
 
     def sample_xyz(self, parent):
-        return parent.translation + pyro.sample("WorldFrameGaussianOffsetRule_xyz", self.xyz_dist)
+        return parent.translation + pyro.sample(
+            "WorldFrameGaussianOffsetRule_xyz", self.xyz_dist
+        )
+
     def score_child(self, parent, child):
         return self.xyz_dist.log_prob(child.translation - parent.translation).sum()
+
     def get_site_values(self, parent, child):
-        return {"WorldFrameGaussianOffsetRule_xyz": SiteValue(self.xyz_dist, child.translation - parent.translation)}
+        return {
+            "WorldFrameGaussianOffsetRule_xyz": SiteValue(
+                self.xyz_dist, child.translation - parent.translation
+            )
+        }
 
     @classmethod
     def get_parameter_prior(cls):
         return {
             "mean": dist.Normal(torch.zeros(3), torch.ones(3)),
-            "variance": dist.Uniform(torch.zeros(3)+1E-6, torch.ones(3)*10.) # TODO: Inverse gamma is better
+            "variance": dist.Uniform(
+                torch.zeros(3) + 1e-6, torch.ones(3) * 10.0
+            ),  # TODO: Inverse gamma is better
         }
+
     @property
     def parameters(self):
-        return {
-            "mean": self.mean,
-            "variance": self.variance
-        }
+        return {"mean": self.mean, "variance": self.variance}
+
     @parameters.setter
     def parameters(self, parameters):
         self.mean = parameters["mean"]
         self.variance = parameters["variance"]
         self.xyz_dist = dist.Normal(self.mean, torch.sqrt(self.variance))
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         pass
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         mean = optim_params["mean"]
         covar = np.diag(optim_params["variance"])
         inverse_covariance = np.linalg.inv(covar)
         covariance_det = np.linalg.det(covar)
-        log_normalizer = np.log(np.sqrt( ((2. * np.pi) ** 3) * covariance_det))
-        xyz_offset = (child.t_optim - (parent.t_optim + mean))
-        
+        log_normalizer = np.log(np.sqrt(((2.0 * np.pi) ** 3) * covariance_det))
+        xyz_offset = child.t_optim - (parent.t_optim + mean)
+
         # Introduce an xyz offset slack, which is forced to be equal to the
         # real xyz offset when active, and allowed to vary freely otherwise.
         # When inactive, the xyz offset slack will achieve an optimal cost of 0
         # by taking a value of 0.
         if isinstance(active, bool):
             assert active is True
-            total_ll = -0.5 * (xyz_offset.transpose().dot(inverse_covariance).dot(xyz_offset)) - log_normalizer
+            total_ll = (
+                -0.5 * (xyz_offset.transpose().dot(inverse_covariance).dot(xyz_offset))
+                - log_normalizer
+            )
         else:
             xyz_offset_slack = prog.NewContinuousVariables(3)
-            inactive = 1. - active
+            inactive = 1.0 - active
             for i in range(3):
-                prog.AddLinearConstraint(xyz_offset[i] - xyz_offset_slack[i] <= 2. * inactive * max_scene_extent_in_any_dir)
-                prog.AddLinearConstraint(xyz_offset[i] - xyz_offset_slack[i] >= -2. * inactive * max_scene_extent_in_any_dir)
-                prog.AddLinearConstraint(xyz_offset_slack[i] <= active*2.*max_scene_extent_in_any_dir)
-                prog.AddLinearConstraint(xyz_offset_slack[i] >= -active*2.*max_scene_extent_in_any_dir)
-            total_ll = -0.5 * ((xyz_offset_slack).transpose().dot(inverse_covariance).dot(xyz_offset_slack)) - log_normalizer * active
+                prog.AddLinearConstraint(
+                    xyz_offset[i] - xyz_offset_slack[i]
+                    <= 2.0 * inactive * max_scene_extent_in_any_dir
+                )
+                prog.AddLinearConstraint(
+                    xyz_offset[i] - xyz_offset_slack[i]
+                    >= -2.0 * inactive * max_scene_extent_in_any_dir
+                )
+                prog.AddLinearConstraint(
+                    xyz_offset_slack[i] <= active * 2.0 * max_scene_extent_in_any_dir
+                )
+                prog.AddLinearConstraint(
+                    xyz_offset_slack[i] >= -active * 2.0 * max_scene_extent_in_any_dir
+                )
+            total_ll = (
+                -0.5
+                * (
+                    (xyz_offset_slack)
+                    .transpose()
+                    .dot(inverse_covariance)
+                    .dot(xyz_offset_slack)
+                )
+                - log_normalizer * active
+            )
         prog.AddQuadraticCost(-total_ll)
 
 
 class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
-    ''' Child xyz is diagonally-Normally distributed relative to parent in the
+    """Child xyz is diagonally-Normally distributed relative to parent in the
     parent's frame. Parsing this in a MIP requires extra work to handle some bilinear
-    terms arising from rotating the offsets out of the parent frame.'''
+    terms arising from rotating the offsets out of the parent frame."""
+
     def sample_xyz(self, parent):
-        return parent.translation + torch.matmul(parent.rotation, pyro.sample("ParentFrameGaussianOffsetRule_xyz", self.xyz_dist))
+        return parent.translation + torch.matmul(
+            parent.rotation,
+            pyro.sample("ParentFrameGaussianOffsetRule_xyz", self.xyz_dist),
+        )
+
     def score_child(self, parent, child):
         return self.xyz_dist.log_prob(
             torch.matmul(parent.rotation.T, child.translation - parent.translation)
         ).sum()
-    def get_site_values(self, parent, child):
-        offset_in_parent_frame = torch.matmul(parent.rotation.T, child.translation - parent.translation)
-        return {"ParentFrameGaussianOffsetRule_xyz": SiteValue(self.xyz_dist, offset_in_parent_frame)}
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def get_site_values(self, parent, child):
+        offset_in_parent_frame = torch.matmul(
+            parent.rotation.T, child.translation - parent.translation
+        )
+        return {
+            "ParentFrameGaussianOffsetRule_xyz": SiteValue(
+                self.xyz_dist, offset_in_parent_frame
+            )
+        }
+
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         pass
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         mean = optim_params["mean"]
         covar = np.diag(optim_params["variance"])
         inverse_covariance = np.linalg.inv(covar)
         covariance_det = np.linalg.det(covar)
-        log_normalizer = np.log(np.sqrt( (2. * np.pi) ** 3 * covariance_det))
+        log_normalizer = np.log(np.sqrt((2.0 * np.pi) ** 3 * covariance_det))
 
         # The offset in parent frame is what is penalized with
         # a normal penalty. This term has bilinear terms:
-        #   parent.R_optim.T.dot(child.t_optim) + 
+        #   parent.R_optim.T.dot(child.t_optim) +
         #   parent.R_optim.T.dot(-parent.t_optim)
         # If we're in a nonlinear optimization context, we're OK. If we're
         # in a MIP context, we'll handle a couple of special cases in which
@@ -439,7 +575,10 @@ class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
         if isinstance(active, bool):
             # NLP context.
             xyz_offset = parent.R_optim.T.dot(child.t_optim - (parent.t_optim + mean))
-            total_ll = -0.5 * (xyz_offset.transpose().dot(inverse_covariance).dot(xyz_offset)) - log_normalizer
+            total_ll = (
+                -0.5 * (xyz_offset.transpose().dot(inverse_covariance).dot(xyz_offset))
+                - log_normalizer
+            )
             total_ll = total_ll * active
             prog.AddCost(-total_ll)
         else:
@@ -455,20 +594,32 @@ class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
                     # By construction of the equivalent set, we will have an active correspondence
                     # if this node is active, so either xyz_offset is properly constrained, or it
                     # doesn't matter.
-                    for k, (_, obs_var, obs_tf) in enumerate(observed_node.possible_observations):
+                    for k, (_, obs_var, obs_tf) in enumerate(
+                        observed_node.possible_observations
+                    ):
                         parent_fixed_R = obs_tf.rotation().matrix()
-                        observed_xyz_offset = parent_fixed_R.T.dot(child.t_optim - (parent.t_optim + mean))
-                        inactive = 1. - obs_var
+                        observed_xyz_offset = parent_fixed_R.T.dot(
+                            child.t_optim - (parent.t_optim + mean)
+                        )
+                        inactive = 1.0 - obs_var
                         for i in range(3):
-                            prog.AddLinearConstraint(observed_xyz_offset[i] - xyz_offset[i] <= inactive*max_scene_extent_in_any_dir*2.)
-                            prog.AddLinearConstraint(observed_xyz_offset[i] - xyz_offset[i] >= -inactive*max_scene_extent_in_any_dir*2.)
-            else: 
+                            prog.AddLinearConstraint(
+                                observed_xyz_offset[i] - xyz_offset[i]
+                                <= inactive * max_scene_extent_in_any_dir * 2.0
+                            )
+                            prog.AddLinearConstraint(
+                                observed_xyz_offset[i] - xyz_offset[i]
+                                >= -inactive * max_scene_extent_in_any_dir * 2.0
+                            )
+            else:
                 #  - If the parent *rotation* is not observed, use the binary variables associated
                 #    with parent.R_optim \in SO(3) to apply a piecewise approximation of this constraint.
                 #    This will work even if the parent or child translations are observed, as the objective
-                #    is quadratic 
+                #    is quadratic
                 logging.warning("Hitting bad MIP case")
-                assert parent.R_optim_mip_info is not None, "Parent rotation was unobserved but has no SO(3) MIP constraint info."
+                assert (
+                    parent.R_optim_mip_info is not None
+                ), "Parent rotation was unobserved but has no SO(3) MIP constraint info."
                 binning = parent.R_optim_mip_info["rot_gen"].interval_binning()
                 R_B = parent.R_optim_mip_info["B"]
                 R_phi = parent.R_optim_mip_info["rot_gen"].phi()
@@ -483,17 +634,23 @@ class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
                 xyz_offset_pre_rotation = child.t_optim - (parent.t_optim)
                 xyz_offset_slack = prog.NewContinuousVariables(3, "xyz_offset_slack")
                 for i in range(3):
-                    prog.AddLinearEqualityConstraint(xyz_offset_pre_rotation[i] == xyz_offset_slack[i])
-                
+                    prog.AddLinearEqualityConstraint(
+                        xyz_offset_pre_rotation[i] == xyz_offset_slack[i]
+                    )
+
                 product_terms = prog.NewContinuousVariables(3, 3, "product_terms")
-                
+
                 # Approximate the constraint w = x*y for every bilinear product
                 # used to assemble the R*t bilinear terms. We reuse the subdivisions
                 # for the terms of R.
                 N_t_subdivisions = 3
                 for j in range(3):
                     t_offset = prog.NewBinaryVariables(N_t_subdivisions)
-                    t_phi = np.linspace(-max_scene_extent_in_any_dir, max_scene_extent_in_any_dir, N_t_subdivisions+1)
+                    t_phi = np.linspace(
+                        -max_scene_extent_in_any_dir,
+                        max_scene_extent_in_any_dir,
+                        N_t_subdivisions + 1,
+                    )
                     for i in range(3):
                         # Need to add one trivial binary variable since we've subdivided the translation
                         # range once.
@@ -501,12 +658,15 @@ class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
                         # which is twice the biggest error in a scene.
                         # Be sure to transpose R
                         AddBilinearProductMcCormickEnvelopeSos2(
-                            prog, parent.R_optim_pre_offset[j, i], xyz_offset_slack[j], product_terms[i, j],
+                            prog,
+                            parent.R_optim_pre_offset[j, i],
+                            xyz_offset_slack[j],
+                            product_terms[i, j],
                             phi_x=R_phi,
                             phi_y=t_phi,
-                            Bx = R_B[j][i],
-                            By = t_offset,
-                            binning=binning
+                            Bx=R_B[j][i],
+                            By=t_offset,
+                            binning=binning,
                         )
                 # Our approximate offset, then, is...
                 xyz_offset = np.sum(product_terms, axis=0) - parent.R_optim.T.dot(mean)
@@ -519,11 +679,25 @@ class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
             # between nodes with known-to-be-equal translation. So this is the safest
             # approach.)
             xyz_offset_slack = prog.NewContinuousVariables(3)
-            inactive = 1. - active
+            inactive = 1.0 - active
             for i in range(3):
-                prog.AddLinearConstraint(xyz_offset[i] - xyz_offset_slack[i] <= 2. * inactive * max_scene_extent_in_any_dir)
-                prog.AddLinearConstraint(xyz_offset[i] - xyz_offset_slack[i] >= -2. * inactive * max_scene_extent_in_any_dir)
-            total_ll = -0.5 * (xyz_offset_slack.transpose().dot(inverse_covariance).dot(xyz_offset_slack))  - log_normalizer * active
+                prog.AddLinearConstraint(
+                    xyz_offset[i] - xyz_offset_slack[i]
+                    <= 2.0 * inactive * max_scene_extent_in_any_dir
+                )
+                prog.AddLinearConstraint(
+                    xyz_offset[i] - xyz_offset_slack[i]
+                    >= -2.0 * inactive * max_scene_extent_in_any_dir
+                )
+            total_ll = (
+                -0.5
+                * (
+                    xyz_offset_slack.transpose()
+                    .dot(inverse_covariance)
+                    .dot(xyz_offset_slack)
+                )
+                - log_normalizer * active
+            )
             prog.AddQuadraticCost(-total_ll)
 
     def get_max_score(self):
@@ -531,9 +705,10 @@ class ParentFrameGaussianOffsetRule(WorldFrameGaussianOffsetRule):
 
 
 class WorldFramePlanarGaussianOffsetRule(XyzProductionRule):
-    ''' Child xyz is diagonally-Normally distributed relative to parent in world frame
-        within a plane. Mean and variance should be 2D, and are sampled to produce a vector
-        d = [x, y, 0]. The child_xyz <- parent_xyz + plane_transform * d'''
+    """Child xyz is diagonally-Normally distributed relative to parent in world frame
+    within a plane. Mean and variance should be 2D, and are sampled to produce a vector
+    d = [x, y, 0]. The child_xyz <- parent_xyz + plane_transform * d"""
+
     def __init__(self, mean, variance, plane_transform, **kwargs):
         assert isinstance(mean, torch.Tensor) and mean.shape == (2,)
         assert isinstance(variance, torch.Tensor) and variance.shape == (2,)
@@ -545,81 +720,118 @@ class WorldFramePlanarGaussianOffsetRule(XyzProductionRule):
 
     def sample_xyz(self, parent):
         xy_offset = pyro.sample("WorldFramePlanarGaussianOffsetRule", self.xy_dist)
-        xyz_offset_homog = torch.cat([xy_offset, torch.tensor([0., 1.])])
-        return parent.translation + torch.matmul(self.plane_transform, xyz_offset_homog)[:3]
+        xyz_offset_homog = torch.cat([xy_offset, torch.tensor([0.0, 1.0])])
+        return (
+            parent.translation
+            + torch.matmul(self.plane_transform, xyz_offset_homog)[:3]
+        )
+
     def score_child(self, parent, child):
-        offset_homog = torch.cat([child.translation - parent.translation, torch.tensor([1.])])
+        offset_homog = torch.cat(
+            [child.translation - parent.translation, torch.tensor([1.0])]
+        )
         xy_offset = torch.matmul(self.plane_transform_inv, offset_homog)[:2]
         return self.xy_dist.log_prob(xy_offset).sum()
 
     def get_site_values(self, parent, child):
-        offset_homog = torch.cat([child.translation - parent.translation, torch.tensor([1.])])
+        offset_homog = torch.cat(
+            [child.translation - parent.translation, torch.tensor([1.0])]
+        )
         xy_offset = torch.matmul(self.plane_transform_inv, offset_homog)[:2]
-        return {"WorldFramePlanarGaussianOffsetRule": SiteValue(self.xy_dist, xy_offset)}
+        return {
+            "WorldFramePlanarGaussianOffsetRule": SiteValue(self.xy_dist, xy_offset)
+        }
 
     @classmethod
     def get_parameter_prior(cls):
         return {
             "mean": dist.Normal(torch.zeros(2), torch.ones(2)),
-            "variance": dist.Uniform(torch.zeros(2)+1E-6, torch.ones(2)*10.) # TODO: Inverse gamma is better
+            "variance": dist.Uniform(
+                torch.zeros(2) + 1e-6, torch.ones(2) * 10.0
+            ),  # TODO: Inverse gamma is better
         }
+
     @property
     def parameters(self):
-        return {
-            "mean": self.mean,
-            "variance": self.variance
-        }
+        return {"mean": self.mean, "variance": self.variance}
+
     @parameters.setter
     def parameters(self, parameters):
         self.mean = parameters["mean"]
         self.variance = parameters["variance"]
         self.xy_dist = dist.Normal(self.mean, torch.sqrt(self.variance))
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # Constrain that the child pose is in the appropriate plane
         # relative to the parent: i.e., that (child.xyz - parent.xyz)
         # dotted with the plane normal is zero.
         plane_tf_inv = torch_tf_to_drake_tf(self.plane_transform_inv).cast[Expression]()
         dx = child.t_optim - parent.t_optim
         dx_in_plane = plane_tf_inv.multiply(dx)
-        prog.AddLinearConstraint(dx_in_plane[2] == 0.)
+        prog.AddLinearConstraint(dx_in_plane[2] == 0.0)
 
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         mean = optim_params["mean"]
         covar = np.diag(optim_params["variance"])
         inverse_covariance = np.linalg.inv(covar)
         covariance_det = np.linalg.det(covar)
-        log_normalizer = np.log(np.sqrt( (2. * np.pi) ** 2 * covariance_det))
+        log_normalizer = np.log(np.sqrt((2.0 * np.pi) ** 2 * covariance_det))
 
         inv_tf = torch_tf_to_drake_tf(self.plane_transform_inv).cast[Expression]()
         xy_offset = inv_tf.multiply(child.t_optim - parent.t_optim)[:2] - mean
 
         if isinstance(active, bool):
-            total_ll = -0.5 * (xy_offset.transpose().dot(inverse_covariance).dot(xy_offset))  - log_normalizer
+            total_ll = (
+                -0.5 * (xy_offset.transpose().dot(inverse_covariance).dot(xy_offset))
+                - log_normalizer
+            )
         else:
             # If inactive, allow the cost to vary freely, which will lead to a cost
             # of zero for this node. Otherwise, the cost will take the value implied
             # by xy_offset.
             xy_offset_slack = prog.NewContinuousVariables(2)
-            inactive = 1. - active
+            inactive = 1.0 - active
             for i in range(2):
-                prog.AddLinearConstraint(xy_offset[i] - xy_offset_slack[i] <= 2. * inactive * max_scene_extent_in_any_dir)
-                prog.AddLinearConstraint(xy_offset[i] - xy_offset_slack[i] >= -2. * inactive * max_scene_extent_in_any_dir)
-            total_ll = -0.5 * (xy_offset_slack.transpose().dot(inverse_covariance).dot(xy_offset_slack))  - log_normalizer * active
+                prog.AddLinearConstraint(
+                    xy_offset[i] - xy_offset_slack[i]
+                    <= 2.0 * inactive * max_scene_extent_in_any_dir
+                )
+                prog.AddLinearConstraint(
+                    xy_offset[i] - xy_offset_slack[i]
+                    >= -2.0 * inactive * max_scene_extent_in_any_dir
+                )
+            total_ll = (
+                -0.5
+                * (
+                    xy_offset_slack.transpose()
+                    .dot(inverse_covariance)
+                    .dot(xy_offset_slack)
+                )
+                - log_normalizer * active
+            )
         prog.AddQuadraticCost(-total_ll)
 
+
 ## Rotation production rules
-class RotationProductionRule():
-    '''
-        Instructions for how to produce a child's position
-        from the parent.
-    '''
+class RotationProductionRule:
+    """
+    Instructions for how to produce a child's position
+    from the parent.
+    """
+
     def __init__(self, fix_parameters=False):
         self.fix_parameters = fix_parameters
+
     def sample_rotation(self, parent):
         raise NotImplementedError()
+
     def score_child(self, parent, child):
         raise NotImplementedError()
+
     def get_site_values(self, parent, child):
         raise NotImplementedError()
 
@@ -628,6 +840,7 @@ class RotationProductionRule():
         # Should return a dict of pyro Dists with supports matching the parameter
         # space of the Rule subclass being used.
         raise NotImplementedError("Child rule should implement parameter priors.")
+
     @property
     def parameters(self):
         # Should return a dict of torch Tensors representing the current
@@ -639,6 +852,7 @@ class RotationProductionRule():
             "Child class should implement parameters getter. Users should"
             " never have to do this."
         )
+
     @parameters.setter
     def parameters(self, parameters):
         raise NotImplementedError(
@@ -646,48 +860,62 @@ class RotationProductionRule():
             " never have to do this."
         )
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
-        ''' Given a MathematicalProgram prog, parameter dictionaries for this
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
+        """Given a MathematicalProgram prog, parameter dictionaries for this
         rule type, and parent and child nodes that have been given R_optim and
         t_optim decision variable members, encodes the constraints implied by
         this rule into the optimization program. Returns whether the rotation
-        of the child is fully constrained by the application of this rule. '''
+        of the child is fully constrained by the application of this rule."""
         raise NotImplementedError()
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
-        ''' Given a MathematicalProgram prog, parameter dictionaries for this
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        """Given a MathematicalProgram prog, parameter dictionaries for this
         rule type, and parent and child nodes that have been given R_optim and
         t_optim decision variable members, adds the negative log probability
-        of this rule given the parent and child to the program.'''
+        of this rule given the parent and child to the program."""
         raise NotImplementedError()
 
 
 class SameRotationRule(RotationProductionRule):
-    ''' Child Xyz is identically parent xyz. '''
+    """Child Xyz is identically parent xyz."""
+
     def __init__(self, offset=torch.eye(3), **kwargs):
         self.offset = offset
         super().__init__(**kwargs)
 
     def sample_rotation(self, parent):
         return torch.matmul(parent.rotation, self.offset)
+
     def score_child(self, parent, child):
-        if torch.allclose(torch.matmul(parent.rotation, self.offset), child.rotation, atol=1E-3):
-            return torch.tensor(0.)
+        if torch.allclose(
+            torch.matmul(parent.rotation, self.offset), child.rotation, atol=1e-3
+        ):
+            return torch.tensor(0.0)
         return torch.tensor(-np.inf)
+
     def get_site_values(self, parent, child):
         return {}
 
     @classmethod
     def get_parameter_prior(cls):
         return {}
+
     @property
     def parameters(self):
         return {}
+
     @parameters.setter
     def parameters(self, parameters):
         if len(parameters.keys()) > 0:
             raise ValueError("SameRotationRule has no parameters.")
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         R_offset = self.offset.detach().numpy()
         R_targ = np.dot(parent.R_optim, R_offset)
         for i in range(3):
@@ -695,19 +923,24 @@ class SameRotationRule(RotationProductionRule):
                 prog.AddLinearEqualityConstraint(child.R_optim[i, j] == R_targ[i, j])
         # Child is fully constrained.
         return True
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
-        return 0.
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        return 0.0
+
 
 class UnconstrainedRotationRule(RotationProductionRule):
-    '''
-        Child rotation is randomly chosen from all possible
-        rotations with no relationship to parent.
-    '''
+    """
+    Child rotation is randomly chosen from all possible
+    rotations with no relationship to parent.
+    """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        desired_density = 1 / np.pi ** 2.
-        true_ub = torch.tensor([1., 1., 0.5])
-        self.scaling = torch.tensor([1., 1., 2.]) * np.pi ** (2. / 3)
+        desired_density = 1 / np.pi**2.0
+        true_ub = torch.tensor([1.0, 1.0, 0.5])
+        self.scaling = torch.tensor([1.0, 1.0, 2.0]) * np.pi ** (2.0 / 3)
         self.u_dist = dist.Uniform(torch.zeros(3), true_ub * self.scaling)
 
     def sample_rotation(self, parent):
@@ -728,14 +961,22 @@ class UnconstrainedRotationRule(RotationProductionRule):
         # Actual density 1 / (pi * pi * .5 pi) = 2 / pi^3
         # -> Normalize should be = pi^(2/3) / 2
 
-        u = pyro.sample("UnconstrainedRotationRule_u", self.u_dist)/self.scaling
-        random_quat = torch.tensor([
-            torch.sqrt(1. - u[0]) * torch.sin(2. * np.pi * u[1]), # [0, 2pi -> -1 -> 1]
-            torch.sqrt(1. - u[0]) * torch.cos(2. * np.pi * u[1]), # [0, 2pi -> -1 -> 1]
-            torch.sqrt(u[0]) * torch.sin(2. * np.pi * u[2]), # [0, pi -> 0 -> 1]
-            torch.sqrt(u[0]) * torch.cos(2. * np.pi * u[2])  # [0, pi -> -1, 1]
-        ])
-        assert torch.isclose(random_quat.square().sum(), torch.ones(1)), (u, random_quat, random_quat.square().sum())
+        u = pyro.sample("UnconstrainedRotationRule_u", self.u_dist) / self.scaling
+        random_quat = torch.tensor(
+            [
+                torch.sqrt(1.0 - u[0])
+                * torch.sin(2.0 * np.pi * u[1]),  # [0, 2pi -> -1 -> 1]
+                torch.sqrt(1.0 - u[0])
+                * torch.cos(2.0 * np.pi * u[1]),  # [0, 2pi -> -1 -> 1]
+                torch.sqrt(u[0]) * torch.sin(2.0 * np.pi * u[2]),  # [0, pi -> 0 -> 1]
+                torch.sqrt(u[0]) * torch.cos(2.0 * np.pi * u[2]),  # [0, pi -> -1, 1]
+            ]
+        )
+        assert torch.isclose(random_quat.square().sum(), torch.ones(1)), (
+            u,
+            random_quat,
+            random_quat.square().sum(),
+        )
         R = quaternion_to_matrix(random_quat.unsqueeze(0))[0, ...]
         return R
 
@@ -749,6 +990,7 @@ class UnconstrainedRotationRule(RotationProductionRule):
         # Agrees with https://marc-b-reynolds.github.io/quaternions/2017/11/10/AveRandomRot.html
         # TODO(gizatt) But probably doesn't agree with forward sample?
         return torch.log(torch.ones(1) / np.pi**2)
+
     def get_site_values(self, parent, child):
         # Reverse the equations linked above to recover u's.
         quaternion = matrix_to_quaternion(child.rotation)
@@ -757,42 +999,60 @@ class UnconstrainedRotationRule(RotationProductionRule):
         if quaternion[2] == 0:
             # Got a weird negative-zero error once; squashing...
             quaternion[2] = torch.abs(quaternion[2])
-        u1 = quaternion[2]**2 + quaternion[3]**2
+        u1 = quaternion[2] ** 2 + quaternion[3] ** 2
         # Sanity-check that my inversion is reasonable
-        assert torch.isclose(quaternion[0]**2. + quaternion[1]**2, 1. - u1)
+        assert torch.isclose(quaternion[0] ** 2.0 + quaternion[1] ** 2, 1.0 - u1)
         u3_1 = torch.atan2(quaternion[2], quaternion[3])
         u2_1 = torch.atan2(quaternion[0], quaternion[1])
 
         assert u3_1 >= 0 and u3_1 <= np.pi, (quaternion, u3_1)
-        
-        if u2_1 < 0:
-            u2_1 = u2_1 + 2. * np.pi
-        
-        u2_1 /= (2. * np.pi)
-        u3_1 /= (2. * np.pi)
 
-        scaling = torch.tensor([1., 1., 2.]) * np.pi ** (2. / 3)
-        return {"UnconstrainedRotationRule_u": SiteValue(self.u_dist, torch.stack([u1, u2_1, u3_1]) * self.scaling)}
+        if u2_1 < 0:
+            u2_1 = u2_1 + 2.0 * np.pi
+
+        u2_1 /= 2.0 * np.pi
+        u3_1 /= 2.0 * np.pi
+
+        scaling = torch.tensor([1.0, 1.0, 2.0]) * np.pi ** (2.0 / 3)
+        return {
+            "UnconstrainedRotationRule_u": SiteValue(
+                self.u_dist, torch.stack([u1, u2_1, u3_1]) * self.scaling
+            )
+        }
 
     @classmethod
     def get_parameter_prior(cls):
         return {}
+
     @property
     def parameters(self):
         return {}
+
     @parameters.setter
     def parameters(self, parameters):
         if len(parameters.keys()) > 0:
             raise ValueError("RotationProductionRule has no parameters.")
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # Child rotation not fully constrained.
         return False
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         # Constant term
         return -self.score_child(parent, child).detach().item() * active
 
-def recover_relative_angle_axis(parent, child, target_axis, zero_angle_width=1E-2, allowed_axis_diff=10. * np.pi/180.):
+
+def recover_relative_angle_axis(
+    parent,
+    child,
+    target_axis,
+    zero_angle_width=1e-2,
+    allowed_axis_diff=10.0 * np.pi / 180.0,
+):
     # Recover angle-axis relationship between a parent and child.
     # Warns if we can't find a rotation axis between the two within
     # requested diff of our expected axis. Last return value is a boolean
@@ -803,34 +1063,51 @@ def recover_relative_angle_axis(parent, child, target_axis, zero_angle_width=1E-
 
     # *Why* is this tolerance so high? This is ridiculous
     if angle <= zero_angle_width:
-        return torch.tensor(0.), target_axis, True
+        return torch.tensor(0.0), target_axis, True
 
     axis = axis_angle / angle
-    axis_misalignment = torch.acos(torch.clip((axis * target_axis).sum(), -1., 1.))
-    if torch.abs(angle) > 0 and axis_misalignment >= np.pi/2.:
+    axis_misalignment = torch.acos(torch.clip((axis * target_axis).sum(), -1.0, 1.0))
+    if torch.abs(angle) > 0 and axis_misalignment >= np.pi / 2.0:
         # Flipping axis will give us a close axis.
         axis = -axis
         angle = -angle
 
-    axis_inner_prod = torch.clip((axis * target_axis).sum(), -1+1E-9, 1-1E-9)
+    axis_inner_prod = torch.clip((axis * target_axis).sum(), -1 + 1e-9, 1 - 1e-9)
     axis_misalignment = np.abs(torch.acos(axis_inner_prod).item())
     if axis_misalignment >= allowed_axis_diff:
         # No saving this; axis doesn't match.
-        logging.warning("Parent %s, Child %s:\nChild illegal rotated from parent: %s vs %s, error of %f deg" % (parent.name, child.name, axis, target_axis, axis_misalignment * 180./np.pi))
+        logging.warning(
+            "Parent %s, Child %s:\nChild illegal rotated from parent: %s vs %s, error of %f deg"
+            % (
+                parent.name,
+                child.name,
+                axis,
+                target_axis,
+                axis_misalignment * 180.0 / np.pi,
+            )
+        )
     return angle, axis, axis_misalignment < allowed_axis_diff
 
+
 class UniformBoundedRevoluteJointRule(RotationProductionRule):
-    '''
-        Child rotation is randomly chosen uniformly from a bounded
-        range of angles around a revolute joint axis about the parent.
-    '''
+    """
+    Child rotation is randomly chosen uniformly from a bounded
+    range of angles around a revolute joint axis about the parent.
+    """
+
     @classmethod
     def from_bounds(cls, axis, lb, ub, **kwargs):
         assert ub >= lb
-        return cls(axis, (ub+lb)/2., ub-lb, **kwargs)
+        return cls(axis, (ub + lb) / 2.0, ub - lb, **kwargs)
+
     def __init__(self, axis, center, width, **kwargs):
         assert isinstance(axis, torch.Tensor) and axis.shape == (3,)
-        assert isinstance(center, (float, torch.Tensor)) and isinstance(width, (float, torch.Tensor)) and width >= 0 and width <= 2. * np.pi
+        assert (
+            isinstance(center, (float, torch.Tensor))
+            and isinstance(width, (float, torch.Tensor))
+            and width >= 0
+            and width <= 2.0 * np.pi
+        )
         if isinstance(center, float):
             center = torch.tensor(center)
         if isinstance(width, float):
@@ -840,10 +1117,7 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         # the 3D unit ball.
         self.axis = axis
         self.axis = self.axis / torch.norm(self.axis)
-        self.parameters = {
-            "center": center,
-            "width": width
-        }
+        self.parameters = {"center": center, "width": width}
         super().__init__(**kwargs)
 
     def sample_rotation(self, parent):
@@ -852,26 +1126,30 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         R_offset = axis_angle_to_matrix(angle_axis.unsqueeze(0))[0, ...]
         R = torch.matmul(parent.rotation, R_offset)
         return R
-        
-    def score_child(self, parent, child, allowed_axis_diff=10. * np.pi/180.):
-        if (self.ub - self.lb) >= 2. * np.pi:
+
+    def score_child(self, parent, child, allowed_axis_diff=10.0 * np.pi / 180.0):
+        if (self.ub - self.lb) >= 2.0 * np.pi:
             # Uniform rotation in 1D base case
-            return torch.log(torch.ones(1) / (2. * np.pi))
-        angle, axis, aligned = recover_relative_angle_axis(parent, child, target_axis=self.axis, allowed_axis_diff=allowed_axis_diff)
+            return torch.log(torch.ones(1) / (2.0 * np.pi))
+        angle, axis, aligned = recover_relative_angle_axis(
+            parent, child, target_axis=self.axis, allowed_axis_diff=allowed_axis_diff
+        )
         if not aligned:
             return -torch.tensor(np.inf)
         # Correct angle to be within 2pi of both LB and UB -- which should be possible,
         # since ub - lb is <= 2pi.
-        while angle < self.lb - 2.*np.pi or angle < self.ub - 2*np.pi:
-            angle += 2.*np.pi
-        while angle > self.ub + 2.*np.pi or angle > self.ub + 2.*np.pi:
-            angle -= 2.*np.pi
+        while angle < self.lb - 2.0 * np.pi or angle < self.ub - 2 * np.pi:
+            angle += 2.0 * np.pi
+        while angle > self.ub + 2.0 * np.pi or angle > self.ub + 2.0 * np.pi:
+            angle -= 2.0 * np.pi
         return self._angle_dist.log_prob(angle)
 
     def get_site_values(self, parent, child):
         # TODO: Not exactly reverse-engineering, but hopefully close.
         theta, _, _ = recover_relative_angle_axis(parent, child, target_axis=self.axis)
-        return {"UniformBoundedRevoluteJointRule_theta": SiteValue(self._angle_dist, theta)}
+        return {
+            "UniformBoundedRevoluteJointRule_theta": SiteValue(self._angle_dist, theta)
+        }
 
     @classmethod
     def get_parameter_prior(cls):
@@ -879,44 +1157,51 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         # and Uniform-distributed width on some reasonable range.
         return {
             "center": dist.Normal(torch.zeros(1), torch.ones(1)),
-            "width": dist.Uniform(torch.zeros(1), torch.ones(1)*np.pi*2.)
+            "width": dist.Uniform(torch.zeros(1), torch.ones(1) * np.pi * 2.0),
         }
+
     @property
     def parameters(self):
-        return {
-            "center": self.center,
-            "width": self.width
-        }
+        return {"center": self.center, "width": self.width}
+
     @parameters.setter
     def parameters(self, parameters):
         self.center = parameters["center"]
         self.width = parameters["width"]
         self._angle_dist = UniformWithEqualityHandling(self.lb, self.ub)
+
     @property
     def lb(self):
-        return self.center - self.width / 2.
+        return self.center - self.width / 2.0
+
     @property
     def ub(self):
-        return self.center + self.width / 2.
+        return self.center + self.width / 2.0
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         axis = self.axis.detach().cpu().numpy()
-        min_angle = (optim_params["center"] - optim_params["width"]/2.)[0]
-        max_angle = (optim_params["center"] + optim_params["width"]/2.)[0]
+        min_angle = (optim_params["center"] - optim_params["width"] / 2.0)[0]
+        max_angle = (optim_params["center"] + optim_params["width"] / 2.0)[0]
 
         if isinstance(min_angle, float) and isinstance(max_angle, float):
             assert min_angle <= max_angle
-            if max_angle - min_angle <= 1E-6:
+            if max_angle - min_angle <= 1e-6:
                 # In this case, the child rotation is exactly equal to the
                 # parent rotation, so we can short-circuit.
                 relative_rotation = RotationMatrix(AngleAxis(max_angle, axis)).matrix()
                 target_rotation = parent.R_optim.dot(relative_rotation)
                 for i in range(3):
                     for j in range(3):
-                        prog.AddLinearEqualityConstraint(child.R_optim[i, j] == target_rotation[i, j])
+                        prog.AddLinearEqualityConstraint(
+                            child.R_optim[i, j] == target_rotation[i, j]
+                        )
                 return True
         else:
-            assert isinstance(min_angle, Expression) and isinstance(max_angle, Expression), (min_angle, max_angle)
+            assert isinstance(min_angle, Expression) and isinstance(
+                max_angle, Expression
+            ), (min_angle, max_angle)
             prog.AddLinearConstraint(min_angle <= max_angle)
 
         # Child rotation should be within a relative rotation of the parent around
@@ -929,17 +1214,21 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         # (see https://drake.mit.edu/doxygen_cxx/classdrake_1_1multibody_1_1_revolute_joint.html).
         # Though there may be an additional offset according to the axis offset
         # in the parent and child frames.
-        #axis_offset_in_parent = RigidTransform()
-        #axis_offset_in_child = RigidTransform()
+        # axis_offset_in_parent = RigidTransform()
+        # axis_offset_in_child = RigidTransform()
         parent_view_of_axis_in_world = parent.R_optim.dot(axis)
         child_view_of_axis_in_world = child.R_optim.dot(axis)
         for k in range(3):
             prog.AddLinearEqualityConstraint(
                 parent_view_of_axis_in_world[k] == child_view_of_axis_in_world[k]
             )
-        
+
         # Short-circuit if there is no rotational constraint other than axis alignment.
-        if isinstance(min_angle, float) and isinstance(max_angle, float) and max_angle - min_angle >= 2.*np.pi:
+        if (
+            isinstance(min_angle, float)
+            and isinstance(max_angle, float)
+            and max_angle - min_angle >= 2.0 * np.pi
+        ):
             return False
 
         # If we're only allowed a limited rotation around this axis, apply a constraint
@@ -948,10 +1237,10 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         # https://github.com/RobotLocomotion/drake/blob/master/multibody/inverse_kinematics/global_inverse_kinematics.cc
         # First generate a vector normal to the rotation axis via cross products.
 
-        v_c = np.cross(axis, np.array([0., 0., 1.]))
-        if np.linalg.norm(v_c) <= np.sqrt(2)/2:
+        v_c = np.cross(axis, np.array([0.0, 0.0, 1.0]))
+        if np.linalg.norm(v_c) <= np.sqrt(2) / 2:
             # Axis is too close to +z; try a different axis.
-            v_c = np.cross(axis, np.array([0., 1., 0.]))
+            v_c = np.cross(axis, np.array([0.0, 1.0, 0.0]))
         v_c = v_c / np.linalg.norm(v_c)
         # TODO: Hongkai uses multiple perpendicular vectors for tighter
         # bound. Why does that make it tighter? Maybe worth a try?
@@ -960,31 +1249,33 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         # "center" us in the bound region, and the symmetric bound size alpha.
         # -alpha <= theta - (a+b)/2 <= alpha
         # where alpha = (b-a) / 2
-        alpha = (max_angle - min_angle) / 2.
-        offset_angle = (max_angle + min_angle) / 2.
+        alpha = (max_angle - min_angle) / 2.0
+        offset_angle = (max_angle + min_angle) / 2.0
         R_offset = RotationMatrix_[type(offset_angle)](
-            AngleAxis_[type(offset_angle)](offset_angle, axis)).matrix()
+            AngleAxis_[type(offset_angle)](offset_angle, axis)
+        ).matrix()
         # |R_WC*R_CJc*v - R_WP * R_PJp * R(k,(a+b)/2)*v | <= 2*sin (α / 2) in
         # global ik code; for us, I'm assuming the joint frames are aligned with
         # the body frames, so R_CJc and R_PJp are identitiy.
-        lorentz_bound = 2 * np.sin(alpha / 2.)
-        vector_diff = (
-            child.R_optim.dot(v_c) - 
-            parent.R_optim.dot(R_offset).dot(v_c)
-        )
+        lorentz_bound = 2 * np.sin(alpha / 2.0)
+        vector_diff = child.R_optim.dot(v_c) - parent.R_optim.dot(R_offset).dot(v_c)
         # TODO: Linear approx?
         prog.AddLorentzConeConstraint(np.r_[lorentz_bound, vector_diff])
         return False
 
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         # Uniform distribution over angles, constant term
         return torch.log(self.width).sum().detach().numpy() * active
+
 
 wfbrr_warned_prior_detached = False
 wfbrr_warned_params_detached = False
 
+
 def add_bingham_cost(prog, R, active, M, Z, log_normalizer):
-    '''
+    """
     Use the reinterpretation of the Bingham distribution objective as
     1/C(Z) * exp[ tr(Z M^T q q^T M) ] for quaternion q.
     The relevant part of the log-likelihood is tr(Z M^T q q^T M).
@@ -1007,28 +1298,25 @@ def add_bingham_cost(prog, R, active, M, Z, log_normalizer):
         2xy + 2zw,       1 - 2xx - 2zz,  2yz - 2xw,
         2xz - 2yw,       2yz + 2xw,      1 - 2xx - 2yy
     ]
-    
+
     Then we can write that cost as linear function of the intermediate
     quaternion outer product terms.
-    '''
+    """
     qqt_terms = prog.NewContinuousVariables(10)
     ww, wx, wy, wz, xx, xy, xz, yy, yz, zz = qqt_terms
     # w,x,y,z all in [-1, 1], so their products are as well.
     prog.AddBoundingBoxConstraint(-np.ones(10), np.ones(10), qqt_terms)
     # Build qqt matrix
-    qqt = np.array([
-        [ww, wx, wy, wz],
-        [wx, xx, xy, xz],
-        [wy, xy, yy, yz],
-        [wz, xz, yz, zz]
-    ])
+    qqt = np.array(
+        [[ww, wx, wy, wz], [wx, xx, xy, xz], [wy, xy, yy, yz], [wz, xz, yz, zz]]
+    )
     # The square terms are further obviously positive.
-    prog.AddLinearConstraint(ww >= 0.)
-    prog.AddLinearConstraint(xx >= 0.)
-    prog.AddLinearConstraint(yy >= 0.)
-    prog.AddLinearConstraint(zz >= 0.)
+    prog.AddLinearConstraint(ww >= 0.0)
+    prog.AddLinearConstraint(xx >= 0.0)
+    prog.AddLinearConstraint(yy >= 0.0)
+    prog.AddLinearConstraint(zz >= 0.0)
     # And the quaternion has unit norm.
-    prog.AddLinearEqualityConstraint(ww + xx + yy + zz == 1.)
+    prog.AddLinearEqualityConstraint(ww + xx + yy + zz == 1.0)
 
     # In dev, see sandbox/snopt_optimal_cost_replication
     if isinstance(active, bool):
@@ -1037,29 +1325,29 @@ def add_bingham_cost(prog, R, active, M, Z, log_normalizer):
         # to have trouble converging. But without it, the solutions
         # are still great. I guess I have enough constraints from
         # the rotation matrix?
-        #prog.AddConstraint(ww * xx == wx**2.)
-        #prog.AddConstraint(ww * yy == wy**2.)
-        #prog.AddConstraint(ww * zz == wz**2.)
+        # prog.AddConstraint(ww * xx == wx**2.)
+        # prog.AddConstraint(ww * yy == wy**2.)
+        # prog.AddConstraint(ww * zz == wz**2.)
 
     else:
         # Approximation
         pass
-        #prog.AddRotatedLorentzConeConstraint(ww, xx, wx**2.)
-        #prog.AddRotatedLorentzConeConstraint(ww, yy, wy**2.)
-        #prog.AddRotatedLorentzConeConstraint(ww, zz, wz**2.)
-        #prog.AddRotatedLorentzConeConstraint(ww, 1., ww**2 + wx**2 + wy**2 + wz**2)
+        # prog.AddRotatedLorentzConeConstraint(ww, xx, wx**2.)
+        # prog.AddRotatedLorentzConeConstraint(ww, yy, wy**2.)
+        # prog.AddRotatedLorentzConeConstraint(ww, zz, wz**2.)
+        # prog.AddRotatedLorentzConeConstraint(ww, 1., ww**2 + wx**2 + wy**2 + wz**2)
 
     # Enforce quaternion-bilinear-term-to-rotmat correspondence.
-    prog.AddLinearEqualityConstraint(R[0, 0] == 1 - 2*yy - 2*zz)
-    prog.AddLinearEqualityConstraint(R[0, 1] == 2*xy - 2*wz)
-    prog.AddLinearEqualityConstraint(R[0, 2] == 2*xz + 2*wy)
-    prog.AddLinearEqualityConstraint(R[1, 0] == 2*xy + 2*wz)
-    prog.AddLinearEqualityConstraint(R[1, 1] == 1 - 2*xx - 2*zz)
-    prog.AddLinearEqualityConstraint(R[1, 2] == 2*yz - 2*wx)
-    prog.AddLinearEqualityConstraint(R[2, 0] == 2*xz - 2*wy)
-    prog.AddLinearEqualityConstraint(R[2, 1] == 2*yz + 2*wx)
-    prog.AddLinearEqualityConstraint(R[2, 2] == 1 - 2*xx - 2*yy)
-    
+    prog.AddLinearEqualityConstraint(R[0, 0] == 1 - 2 * yy - 2 * zz)
+    prog.AddLinearEqualityConstraint(R[0, 1] == 2 * xy - 2 * wz)
+    prog.AddLinearEqualityConstraint(R[0, 2] == 2 * xz + 2 * wy)
+    prog.AddLinearEqualityConstraint(R[1, 0] == 2 * xy + 2 * wz)
+    prog.AddLinearEqualityConstraint(R[1, 1] == 1 - 2 * xx - 2 * zz)
+    prog.AddLinearEqualityConstraint(R[1, 2] == 2 * yz - 2 * wx)
+    prog.AddLinearEqualityConstraint(R[2, 0] == 2 * xz - 2 * wy)
+    prog.AddLinearEqualityConstraint(R[2, 1] == 2 * yz + 2 * wx)
+    prog.AddLinearEqualityConstraint(R[2, 2] == 1 - 2 * xx - 2 * yy)
+
     if isinstance(active, bool):
         assert active is True
         ll = np.trace(Z.dot(M.T.dot(qqt.dot(M)))) - log_normalizer
@@ -1073,13 +1361,21 @@ def add_bingham_cost(prog, R, active, M, Z, log_normalizer):
         # Add slack s.t. when active, qqt_slack = qqt, but otherwise,
         # qqt_slack = modemodeT.
         qqt_slack = prog.NewContinuousVariables(4, 4, "qqt_slack")
-        inactive = 1. - active
+        inactive = 1.0 - active
         for i in range(4):
             for j in range(4):
-                prog.AddLinearConstraint(modemodeT[i, j] - qqt_slack[i, j] >= -2.*active)
-                prog.AddLinearConstraint(modemodeT[i, j] - qqt_slack[i, j] <= 2.*active)
-                prog.AddLinearConstraint(qqt[i, j] - qqt_slack[i, j] >= -2. * (inactive))
-                prog.AddLinearConstraint(qqt[i, j] - qqt_slack[i, j] <= 2. * (inactive))
+                prog.AddLinearConstraint(
+                    modemodeT[i, j] - qqt_slack[i, j] >= -2.0 * active
+                )
+                prog.AddLinearConstraint(
+                    modemodeT[i, j] - qqt_slack[i, j] <= 2.0 * active
+                )
+                prog.AddLinearConstraint(
+                    qqt[i, j] - qqt_slack[i, j] >= -2.0 * (inactive)
+                )
+                prog.AddLinearConstraint(
+                    qqt[i, j] - qqt_slack[i, j] <= 2.0 * (inactive)
+                )
         ll = np.trace(Z.dot(M.T.dot(qqt_slack.dot(M)))) - log_normalizer * active
     prog.AddLinearCost(-ll)
 
@@ -1087,7 +1383,7 @@ def add_bingham_cost(prog, R, active, M, Z, log_normalizer):
 
 
 class WorldFrameBinghamRotationRule(RotationProductionRule):
-    '''
+    """
     Child rotation is chosen randomly from a Bingham distribution
     describing a distribution over rotations in world frame.
 
@@ -1097,53 +1393,49 @@ class WorldFrameBinghamRotationRule(RotationProductionRule):
 
     Recommended to use a helper function to assemble these from target rotation
     and RPY concentrations.
-    '''
+    """
+
     @classmethod
-    def from_rotation_and_rpy_variances(cls, rotation_mode, rpy_concentration, **kwargs):
-        ''' Construct this rule to distribute the child rotation
+    def from_rotation_and_rpy_variances(
+        cls, rotation_mode, rpy_concentration, **kwargs
+    ):
+        """Construct this rule to distribute the child rotation
         around the given RotationMatrix, with specified concentrations
-        around each rotation axis. '''
+        around each rotation axis."""
         assert isinstance(rotation_mode, RotationMatrix)
         assert len(rpy_concentration) == 3 and [x > 0 for x in rpy_concentration]
         # Last column of M should be the mode, as a quaternion.
         # Construct the rest of M to be orthogonal.
         mode = rotation_mode.ToQuaternion()
-        rot_around_x = RollPitchYaw([np.pi, 0., 0.]).ToQuaternion()
-        rot_around_y = RollPitchYaw([0., np.pi, 0.]).ToQuaternion()
-        rot_around_z = RollPitchYaw([0., 0., np.pi]).ToQuaternion()
-        m = np.stack([
-            rot_around_x.multiply(mode).wxyz(),
-            rot_around_y.multiply(mode).wxyz(),
-            rot_around_z.multiply(mode).wxyz(),
-            mode.wxyz()
-        ], axis=1)
+        rot_around_x = RollPitchYaw([np.pi, 0.0, 0.0]).ToQuaternion()
+        rot_around_y = RollPitchYaw([0.0, np.pi, 0.0]).ToQuaternion()
+        rot_around_z = RollPitchYaw([0.0, 0.0, np.pi]).ToQuaternion()
+        m = np.stack(
+            [
+                rot_around_x.multiply(mode).wxyz(),
+                rot_around_y.multiply(mode).wxyz(),
+                rot_around_z.multiply(mode).wxyz(),
+                mode.wxyz(),
+            ],
+            axis=1,
+        )
         z = np.array(
-            [-rpy_concentration[0],
-             -rpy_concentration[1],
-             -rpy_concentration[2],
-             0.
-            ]
+            [-rpy_concentration[0], -rpy_concentration[1], -rpy_concentration[2], 0.0]
         )
         # Reorder Z to be ascending, with M in lockstep.
         reorder_inds = np.argsort(z)
         z = z[reorder_inds]
         m = m[:, reorder_inds]
-        return cls(
-            torch.tensor(deepcopy(m)), torch.tensor(deepcopy(z)), **kwargs
-        )
-
+        return cls(torch.tensor(deepcopy(m)), torch.tensor(deepcopy(z)), **kwargs)
 
     def __init__(self, M, Z, **kwargs):
         assert isinstance(M, torch.Tensor) and M.shape == (4, 4)
         assert isinstance(Z, torch.Tensor) and Z.shape == (4,)
         # More detailed checks on contents of M and Z will be done
         # by the distribution type.
-        self.parameters = {
-            "M": M,
-            "Z": Z
-        }
+        self.parameters = {"M": M, "Z": Z}
         super().__init__(**kwargs)
-    
+
     def sample_rotation(self, parent):
         quat = pyro.sample("WorldFrameBinghamRotationRule_quat", self._bingham_dist)
         R = quaternion_to_matrix(quat)
@@ -1163,7 +1455,9 @@ class WorldFrameBinghamRotationRule(RotationProductionRule):
         # implementation of BinghamDistribution.
         if quat[-1] < 0:
             quat = quat * -1
-        return {"WorldFrameBinghamRotationRule_quat": SiteValue(self._bingham_dist, quat)}
+        return {
+            "WorldFrameBinghamRotationRule_quat": SiteValue(self._bingham_dist, quat)
+        }
 
     @classmethod
     def get_parameter_prior(cls):
@@ -1174,18 +1468,19 @@ class WorldFrameBinghamRotationRule(RotationProductionRule):
         # parameters "reasonably".
         global wfbrr_warned_prior_detached
         if not wfbrr_warned_prior_detached:
-            logging.warning("Prior over parameters of WorldFrameBinghamRotationRule are Deltas.")
+            logging.warning(
+                "Prior over parameters of WorldFrameBinghamRotationRule are Deltas."
+            )
             wfbrr_warned_prior_detached = True
         return {
             "M": dist.Delta(torch.eye(4)),
-            "Z": dist.Delta(torch.tensor([-1, -1, -1, 0.]))
+            "Z": dist.Delta(torch.tensor([-1, -1, -1, 0.0])),
         }
+
     @property
     def parameters(self):
-        return {
-            "M": self.M,
-            "Z": self.Z
-        }
+        return {"M": self.M, "Z": self.Z}
+
     @parameters.setter
     def parameters(self, parameters):
         self.M = parameters["M"]
@@ -1196,15 +1491,20 @@ class WorldFrameBinghamRotationRule(RotationProductionRule):
             wfbrr_warned_params_detached = True
 
         self._bingham_dist = BinghamDistribution(
-            param_m=self.M.detach(), param_z=self.Z.detach(),
-            options={"flip_to_positive_z_quaternions": True}
+            param_m=self.M.detach(),
+            param_z=self.Z.detach(),
+            options={"flip_to_positive_z_quaternions": True},
         )
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # Child rotation is not fully constrained.
         return False
 
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
         R = child.R_optim
         M = optim_params["M"]
         Z = np.diag(optim_params["Z"])
@@ -1213,11 +1513,11 @@ class WorldFrameBinghamRotationRule(RotationProductionRule):
 
 
 class ParentFrameBinghamRotationRule(WorldFrameBinghamRotationRule):
-    '''
+    """
     Same as WorldFrameBinghamRotationRule, but the child rotation is chosen
     in parent rotation frame.
-    '''
-    
+    """
+
     def sample_rotation(self, parent):
         quat = pyro.sample("ParentFrameBinghamRotationRule_quat", self._bingham_dist)
         R = quaternion_to_matrix(quat)
@@ -1239,14 +1539,20 @@ class ParentFrameBinghamRotationRule(WorldFrameBinghamRotationRule):
         # implementation of BinghamDistribution.
         if quat[-1] < 0:
             quat = quat * -1
-        return {"ParentFrameBinghamRotationRule_quat": SiteValue(self._bingham_dist, quat)}
+        return {
+            "ParentFrameBinghamRotationRule_quat": SiteValue(self._bingham_dist, quat)
+        }
 
-    def encode_constraint(self, prog, optim_params, parent, child, max_scene_extent_in_any_dir):
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
         # No constraints here.
         pass
 
-    def encode_cost(self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir):
-        '''
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        """
         Use the same logic as the world-frame Bingham distribution objective
         that introduces intermediate variables for the quaternion bilinear
         terms and produces the cost from that. However, now, the
@@ -1271,11 +1577,11 @@ class ParentFrameBinghamRotationRule(WorldFrameBinghamRotationRule):
         - If neither are observed, we enforce the bilinear relationship delta_R = R_p * R_c
         with piecewise McCormick envelopes using the binary variables used in the SO(3)
         constraints for the two rotations.
-        '''
+        """
         M = optim_params["M"]
         Z = np.diag(optim_params["Z"])
         log_normalizer = torch.log(self._bingham_dist._norm_const).detach().numpy()
-        
+
         if isinstance(active, bool):
             # NLP context; just add the nonlinear cost and run.
             deltaR = parent.R_optim.T.dot(child.R_optim)
@@ -1299,33 +1605,53 @@ class ParentFrameBinghamRotationRule(WorldFrameBinghamRotationRule):
                 deltaR = prog.NewContinuousVariables(3, 3, "deltaR_from_parent_obs")
                 # For all observed nodes that could determine the parent rotation...
                 for observed_node in parent.R_equivalent_to_observed_nodes:
-                    for k, (_, obs_var, obs_tf) in enumerate(observed_node.possible_observations):
+                    for k, (_, obs_var, obs_tf) in enumerate(
+                        observed_node.possible_observations
+                    ):
                         parent_fixed_R = obs_tf.rotation().matrix()
                         observed_deltaR = parent_fixed_R.T.dot(child.R_optim)
-                        inactive = 1. - obs_var
+                        inactive = 1.0 - obs_var
                         for i in range(3):
                             for j in range(3):
-                                prog.AddLinearConstraint(observed_deltaR[i, j] - deltaR[i, j] <= inactive*2.)
-                                prog.AddLinearConstraint(observed_deltaR[i, j] - deltaR[i, j] >= -inactive*2.)
+                                prog.AddLinearConstraint(
+                                    observed_deltaR[i, j] - deltaR[i, j]
+                                    <= inactive * 2.0
+                                )
+                                prog.AddLinearConstraint(
+                                    observed_deltaR[i, j] - deltaR[i, j]
+                                    >= -inactive * 2.0
+                                )
             elif child_R_observed:
                 #  Same logic as above case for a fixed child observation.
                 deltaR = prog.NewContinuousVariables(3, 3, "deltaR_from_child_obs")
                 # For all observed nodes that could determine the parent rotation...
                 for observed_node in child.R_equivalent_to_observed_nodes:
-                    for k, (_, obs_var, obs_tf) in enumerate(observed_node.possible_observations):
+                    for k, (_, obs_var, obs_tf) in enumerate(
+                        observed_node.possible_observations
+                    ):
                         child_fixed_R = obs_tf.rotation().matrix()
                         observed_deltaR = parent.R_optim.T.dot(child_fixed_R)
-                        inactive = 1. - obs_var
+                        inactive = 1.0 - obs_var
                         for i in range(3):
                             for j in range(3):
-                                prog.AddLinearConstraint(observed_deltaR[i, j] - deltaR[i, j] <= inactive*2.)
-                                prog.AddLinearConstraint(observed_deltaR[i, j] - deltaR[i, j] >= -inactive*2.)
+                                prog.AddLinearConstraint(
+                                    observed_deltaR[i, j] - deltaR[i, j]
+                                    <= inactive * 2.0
+                                )
+                                prog.AddLinearConstraint(
+                                    observed_deltaR[i, j] - deltaR[i, j]
+                                    >= -inactive * 2.0
+                                )
             else:
                 assert not parent_R_observed and not child_R_observed
                 #  - If neither rotation is observed, then we need to deal with bilinear terms between
                 # their rotations.
-                assert parent.R_optim_mip_info is not None, "Parent rotation was unobserved but has no SO(3) MIP constraint info."
-                assert child.R_optim_mip_info is not None, "Child rotation was unobserved but has no SO(3) MIP constraint info."
+                assert (
+                    parent.R_optim_mip_info is not None
+                ), "Parent rotation was unobserved but has no SO(3) MIP constraint info."
+                assert (
+                    child.R_optim_mip_info is not None
+                ), "Child rotation was unobserved but has no SO(3) MIP constraint info."
                 binning = parent.R_optim_mip_info["rot_gen"].interval_binning()
                 assert binning == child.R_optim_mip_info["rot_gen"].interval_binning()
                 parent_R_B = parent.R_optim_mip_info["B"]
@@ -1342,19 +1668,28 @@ class ParentFrameBinghamRotationRule(WorldFrameBinghamRotationRule):
                 for i in range(3):
                     for j in range(3):
                         # deltaR[i, j] = \sum_k parent.R.T [i, k] * child.R[k, j]
-                        terms = prog.NewContinuousVariables(3, "deltaR_sum_terms_%d_%d" % (i, j))
+                        terms = prog.NewContinuousVariables(
+                            3, "deltaR_sum_terms_%d_%d" % (i, j)
+                        )
                         prog.AddLinearEqualityConstraint(deltaR[i, j] == sum(terms))
                         for term_k in range(3):
                             # Be sure to transpose R parent
                             AddBilinearProductMcCormickEnvelopeSos2(
-                                prog, parent.R_optim_pre_offset[term_k, i], child.R_optim_pre_offset[term_k, j], terms[term_k],
+                                prog,
+                                parent.R_optim_pre_offset[term_k, i],
+                                child.R_optim_pre_offset[term_k, j],
+                                terms[term_k],
                                 phi_x=parent_R_phi,
                                 phi_y=child_R_phi,
-                                Bx = parent_R_B[term_k][i],
-                                By = child_R_B[term_k][j],
-                                binning=binning
+                                Bx=parent_R_B[term_k][i],
+                                By=child_R_B[term_k][j],
+                                binning=binning,
                             )
                 # And now account for random offsets
-                deltaR = parent.R_random_offset.matrix().T.dot(deltaR).dot(child.R_random_offset.matrix())
+                deltaR = (
+                    parent.R_random_offset.matrix()
+                    .T.dot(deltaR)
+                    .dot(child.R_random_offset.matrix())
+                )
             # Now we can use that expression for deltaR to construct the bingham cost.
             add_bingham_cost(prog, deltaR, active, M, Z, log_normalizer)

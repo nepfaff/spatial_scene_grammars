@@ -20,8 +20,9 @@ from pydrake.all import (  # ConnectMeshcatVisualizer,
     BodyIndex,
     CoulombFriction,
     DiagramBuilder,
+    DiscreteContactApproximation,
     ExternallyAppliedSpatialForce,
-    InverseKinematics,
+    InverseKinematics,MultibodyPlantConfig,AddMultibodyPlant,
     LeafSystem,
     MeshcatVisualizer,
     MinimumDistanceUpperBoundConstraint,
@@ -41,20 +42,23 @@ from pydrake.all import (  # ConnectMeshcatVisualizer,
 )
 from pydrake.common.cpp_param import List as DrakeBindingList
 
+
 def torch_tf_to_drake_tf(tf):
     return RigidTransform(tf.cpu().detach().numpy())
+
 
 def drake_tf_to_torch_tf(tf):
     return torch.tensor(tf.GetAsMatrix4())
 
 
 default_spatial_inertia = SpatialInertia(
-    mass=1.0,
-    p_PScm_E=np.zeros(3), G_SP_E=UnitInertia(0.01, 0.01, 0.01)
+    mass=1.0, p_PScm_E=np.zeros(3), G_SP_E=UnitInertia(0.01, 0.01, 0.01)
 )
 default_friction = CoulombFriction(0.9, 0.8)
-class PhysicsGeometryInfo():
-    '''
+
+
+class PhysicsGeometryInfo:
+    """
     Container for physics and geometry info, providing simulator and
     visualization interoperation.
     Args:
@@ -91,7 +95,8 @@ class PhysicsGeometryInfo():
           this object that should not intersect with any other node's
           clearance geometry: e.g., the space in front of a cabinet should
           be clear so the doors can open.
-    '''
+    """
+
     def __init__(self, fixed=True, spatial_inertia=None, is_container=False):
         self.fixed = fixed
         self.is_container = is_container
@@ -100,22 +105,28 @@ class PhysicsGeometryInfo():
         self.visual_geometry = []
         self.collision_geometry = []
         self.clearance_geometry = []
-    def register_model_file(self, tf, model_path, root_body_name=None,
-                            q0_dict={}):
+
+    def register_model_file(self, tf, model_path, root_body_name=None, q0_dict={}):
         self.model_paths.append((tf, model_path, root_body_name, q0_dict))
-    def register_geometry(self, tf, geometry, color=np.ones(4), friction=default_friction):
+
+    def register_geometry(
+        self, tf, geometry, color=np.ones(4), friction=default_friction
+    ):
         # Shorthand for registering the same geometry as collision + visual.
         self.register_visual_geometry(tf, geometry, color)
         self.register_collision_geometry(tf, geometry, friction)
+
     def register_visual_geometry(self, tf, geometry, color=np.ones(4)):
         assert isinstance(tf, torch.Tensor) and tf.shape == (4, 4)
         assert isinstance(geometry, pydrake.geometry.Shape)
         self.visual_geometry.append((tf, geometry, color))
+
     def register_collision_geometry(self, tf, geometry, friction=default_friction):
         assert isinstance(tf, torch.Tensor) and tf.shape == (4, 4)
         assert isinstance(geometry, pydrake.geometry.Shape)
         assert isinstance(friction, CoulombFriction)
         self.collision_geometry.append((tf, geometry, friction))
+
     def register_clearance_geometry(self, tf, geometry):
         assert isinstance(tf, torch.Tensor) and tf.shape == (4, 4)
         assert isinstance(geometry, pydrake.geometry.Shape)
@@ -125,23 +136,26 @@ class PhysicsGeometryInfo():
 def sanity_check_node_tf_and_physics_geom_info(node):
     assert isinstance(node.tf, torch.Tensor), type(node.tf)
     assert node.tf.shape == (4, 4), node.tf.shape
-    assert isinstance(node.physics_geometry_info, PhysicsGeometryInfo), type(node.physics_geometry_info)
+    assert isinstance(node.physics_geometry_info, PhysicsGeometryInfo), type(
+        node.physics_geometry_info
+    )
 
 
 class DecayingForceToDesiredConfigSystem(LeafSystem):
-    ''' Connect to a MBP to apply ghost forces (that decay over time)
-    to encourage the scene to settle near the desired configuration. '''
+    """Connect to a MBP to apply ghost forces (that decay over time)
+    to encourage the scene to settle near the desired configuration."""
+
     def __init__(self, mbp, q_des):
         LeafSystem.__init__(self)
-        self.set_name('DecayingForceToDesiredConfigSystem')
+        self.set_name("DecayingForceToDesiredConfigSystem")
 
         self.robot_state_input_port = self.DeclareVectorInputPort(
-            "robot_state", BasicVector(mbp.num_positions() + mbp.num_velocities()))
+            "robot_state", BasicVector(mbp.num_positions() + mbp.num_velocities())
+        )
         forces_cls = Value[DrakeBindingList[ExternallyAppliedSpatialForce]]
         self.spatial_forces_output_port = self.DeclareAbstractOutputPort(
-            "spatial_forces_vector",
-            lambda: forces_cls(),
-            self.DoCalcAbstractOutput)
+            "spatial_forces_vector", lambda: forces_cls(), self.DoCalcAbstractOutput
+        )
 
         self.mbp = mbp
         self.q_des = q_des
@@ -152,8 +166,8 @@ class DecayingForceToDesiredConfigSystem(LeafSystem):
     def DoCalcAbstractOutput(self, context, y_data):
         t = context.get_time()
         # Annealing schedule
-        force_multiplier = 1.0*np.exp(-0.5*t)*np.abs(np.cos(t*np.pi/2.))
-        
+        force_multiplier = 1.0 * np.exp(-0.5 * t) * np.abs(np.cos(t * np.pi / 2.0))
+
         x_in = self.EvalVectorInput(context, 0).get_value()
         self.mbp.SetPositionsAndVelocities(self.mbp_current_context, x_in)
 
@@ -164,7 +178,9 @@ class DecayingForceToDesiredConfigSystem(LeafSystem):
             # Get pose of body in world frame
             body_tf = self.mbp.GetFreeBodyPose(self.mbp_current_context, body)
             body_r = body_tf.rotation().matrix()
-            body_tfd = self.mbp.EvalBodySpatialVelocityInWorld(self.mbp_current_context, body)
+            body_tfd = self.mbp.EvalBodySpatialVelocityInWorld(
+                self.mbp_current_context, body
+            )
 
             des_tf = self.mbp.GetFreeBodyPose(self.mbp_des_context, body)
             delta_xyz = des_tf.translation() - body_tf.translation()
@@ -178,13 +194,17 @@ class DecayingForceToDesiredConfigSystem(LeafSystem):
 
             # Multiply out
             aa = AngleAxis(delta_r)
-            tau = aa.axis()*aa.angle() - 0.1*body_tfd.rotational()
-            f = (delta_xyz*10. - 0.1*body_tfd.translational() + np.array([0., 0., 9.81])/max(1., force_multiplier))*m
-            max_force = 100.
-            max_torque = 100.
+            tau = aa.axis() * aa.angle() - 0.1 * body_tfd.rotational()
+            f = (
+                delta_xyz * 10.0
+                - 0.1 * body_tfd.translational()
+                + np.array([0.0, 0.0, 9.81]) / max(1.0, force_multiplier)
+            ) * m
+            max_force = 100.0
+            max_torque = 100.0
             force = SpatialForce(
-                tau=np.clip(tau*force_multiplier, -max_torque, max_torque),
-                f=np.clip(f*force_multiplier, -max_force, max_force)
+                tau=np.clip(tau * force_multiplier, -max_torque, max_torque),
+                f=np.clip(f * force_multiplier, -max_force, max_force),
             )
             out = ExternallyAppliedSpatialForce()
             out.F_Bq_W = force
@@ -193,8 +213,9 @@ class DecayingForceToDesiredConfigSystem(LeafSystem):
 
         y_data.set_value(forces)
 
+
 class StochasticLangevinForceSource(LeafSystem):
-    ''' Connect to a MBP to apply ghost forces. The forces are:
+    """Connect to a MBP to apply ghost forces. The forces are:
     1) Random noise whose magnitude decays with sim time.
     2) A force proportional to the gradient of the log-prob of the
     object poses w.r.t the log-prob of the scene tree.
@@ -202,21 +223,22 @@ class StochasticLangevinForceSource(LeafSystem):
     This probably doesn't work for systems with tough inter-node
     constraints like planar-ity. Need to do some reparameterization
     of the system under sim for that to work?
-    
+
     MBP + scene_tree should be corresponded to each other through
     the mbp construction method in this file.
-    '''
+    """
+
     def __init__(self, mbp, scene_tree, node_to_free_body_ids_map, body_id_to_node_map):
         LeafSystem.__init__(self)
-        self.set_name('StochasticLangevinForceSystem')
+        self.set_name("StochasticLangevinForceSystem")
 
         self.robot_state_input_port = self.DeclareVectorInputPort(
-            "robot_state", BasicVector(mbp.num_positions() + mbp.num_velocities()))
+            "robot_state", BasicVector(mbp.num_positions() + mbp.num_velocities())
+        )
         forces_cls = Value[DrakeBindingList[ExternallyAppliedSpatialForce]]
         self.spatial_forces_output_port = self.DeclareAbstractOutputPort(
-            "spatial_forces_vector",
-            lambda: forces_cls(),
-            self.DoCalcAbstractOutput)
+            "spatial_forces_vector", lambda: forces_cls(), self.DoCalcAbstractOutput
+        )
 
         self.scene_tree = scene_tree
         self.node_to_free_body_ids_map = node_to_free_body_ids_map
@@ -226,14 +248,18 @@ class StochasticLangevinForceSource(LeafSystem):
 
         for node, body_ids in self.node_to_free_body_ids_map.items():
             for body_id in body_ids:
-                self.mbp.SetFreeBodyPose(self.mbp_current_context, self.mbp.get_body(body_id), torch_tf_to_drake_tf(node.tf))
+                self.mbp.SetFreeBodyPose(
+                    self.mbp_current_context,
+                    self.mbp.get_body(body_id),
+                    torch_tf_to_drake_tf(node.tf),
+                )
 
     def DoCalcAbstractOutput(self, context, y_data):
         t = context.get_time()
         # TODO: Hook up random input on the right kind of random port.
         noise_scale = 0.25 * 0.25**t
         ll_scale = 2.0 * 0.25**t
-        
+
         x_in = self.EvalVectorInput(context, 0).get_value()
         self.mbp.SetPositionsAndVelocities(self.mbp_current_context, x_in)
 
@@ -243,40 +269,46 @@ class StochasticLangevinForceSource(LeafSystem):
         for body_id, node in self.body_id_to_node_map.items():
             if body_id not in free_bodies:
                 continue
-            tf_dec_var = drake_tf_to_torch_tf(self.mbp.GetFreeBodyPose(self.mbp_current_context, self.mbp.get_body(body_id)))
+            tf_dec_var = drake_tf_to_torch_tf(
+                self.mbp.GetFreeBodyPose(
+                    self.mbp_current_context, self.mbp.get_body(body_id)
+                )
+            )
             tf_dec_var.requires_grad = True
             body_tf_vars[body_id] = tf_dec_var
             node.tf = tf_dec_var
-            
+
         # Compute log prob and backprop.
         score = self.scene_tree.score(include_discrete=False, include_continuous=True)
-        score.backward() 
-        
+        score.backward()
+
         forces = []
         for body_id in free_bodies:
             body = self.mbp.get_body(body_id)
-            
+
             # Get pose of body in world frame
             body_tf = self.mbp.GetFreeBodyPose(self.mbp_current_context, body)
-            body_tfd = self.mbp.EvalBodySpatialVelocityInWorld(self.mbp_current_context, body)
+            body_tfd = self.mbp.EvalBodySpatialVelocityInWorld(
+                self.mbp_current_context, body
+            )
 
             # Get mass info so we can calc correct force scaling
             si = body.CalcSpatialInertiaInBodyFrame(self.mbp_current_context)
             m = si.get_mass()
             I = si.CalcRotationalInertia().CopyToFullMatrix3()
             I_w = body_tf.rotation().matrix().dot(I)
-            
+
             # Calculate total wrench
             # Noise term
-            f_noise = np.random.normal(0., noise_scale, size=3)
-            tau_noise = np.random.normal(0., noise_scale, size=3)
+            f_noise = np.random.normal(0.0, noise_scale, size=3)
+            tau_noise = np.random.normal(0.0, noise_scale, size=3)
             # Force maximizing log prob
             t_grad = body_tf_vars[body_id].grad[:3, 3].numpy()
-            f_ll = t_grad*m
+            f_ll = t_grad * m
 
             force = SpatialForce(
-                tau=tau_noise - 0.01*body_tfd.rotational(),
-                f=f_noise + f_ll*ll_scale - body_tfd.translational()*0.5
+                tau=tau_noise - 0.01 * body_tfd.rotational(),
+                f=f_noise + f_ll * ll_scale - body_tfd.translational() * 0.5,
             )
             out = ExternallyAppliedSpatialForce()
             out.F_Bq_W = force
@@ -290,19 +322,21 @@ def resolve_catkin_package_path(package_map, input_str):
         elements = input_str.split("://")
         assert len(elements) == 2, "Malformed path " + input_str
         package_name, path_in_package = elements
-        assert package_map.Contains(package_name), "%s not in package map" % package_name
-        return os.path.join(
-            package_map.GetPath(package_name),
-            path_in_package
+        assert package_map.Contains(package_name), (
+            "%s not in package map" % package_name
         )
+        return os.path.join(package_map.GetPath(package_name), path_in_package)
     else:
         return input_str
 
 
-def compile_scene_tree_clearance_geometry_to_mbp_and_sg(scene_tree, timestep=0.001, alpha=0.25):
+def compile_scene_tree_clearance_geometry_to_mbp_and_sg(
+    scene_tree, timestep=0.001, alpha=0.25
+):
     builder = DiagramBuilder()
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
-        builder, MultibodyPlant(time_step=timestep))
+        builder, MultibodyPlant(time_step=timestep)
+    )
     parser = Parser(mbp)
     # parser.package_map().PopulateFromEnvironment("ROS_PACKAGE_PATH")
     parser.package_map().PopulateFromRosPackagePath()
@@ -310,8 +344,8 @@ def compile_scene_tree_clearance_geometry_to_mbp_and_sg(scene_tree, timestep=0.0
     free_body_poses = []
     # For generating colors.
     node_class_to_color_dict = {}
-    cmap = plt.cm.get_cmap('jet')
-    cmap_counter = 0.
+    cmap = plt.cm.get_cmap("jet")
+    cmap_counter = 0.0
     for node in scene_tree.nodes:
         if node.tf is not None and node.physics_geometry_info is not None:
             # Don't have to do anything if this does not introduce geometry.
@@ -325,8 +359,9 @@ def compile_scene_tree_clearance_geometry_to_mbp_and_sg(scene_tree, timestep=0.0
             # TODO(gizatt) This tree body index is built in to disambiguate names.
             # But I forsee a name-to-stuff resolution crisis when inference time comes...
             # this might get resolved by the solution to that.
-            body = mbp.AddRigidBody(name=node.name,
-                                    M_BBo_B=phys_geom_info.spatial_inertia)
+            body = mbp.AddRigidBody(
+                name=node.name, M_BBo_B=phys_geom_info.spatial_inertia
+            )
             tf = torch_tf_to_drake_tf(node.tf)
             mbp.SetDefaultFreeBodyPose(body, tf)
 
@@ -338,7 +373,7 @@ def compile_scene_tree_clearance_geometry_to_mbp_and_sg(scene_tree, timestep=0.0
                 color = list(cmap(cmap_counter))
                 color[3] = alpha
                 node_class_to_color_dict[node_type_string] = color
-                cmap_counter = np.fmod(cmap_counter + np.pi*2., 1.)
+                cmap_counter = np.fmod(cmap_counter + np.pi * 2.0, 1.0)
 
             # Handle adding primitive geometry by adding it all to one
             # mbp.
@@ -349,32 +384,42 @@ def compile_scene_tree_clearance_geometry_to_mbp_and_sg(scene_tree, timestep=0.0
                         X_BG=torch_tf_to_drake_tf(tf),
                         shape=geometry,
                         name=node.name + "_col_%03d" % k,
-                        coulomb_friction=default_friction)
+                        coulomb_friction=default_friction,
+                    )
                     mbp.RegisterVisualGeometry(
                         body=body,
                         X_BG=torch_tf_to_drake_tf(tf),
                         shape=geometry,
                         name=node.name + "_vis_%03d" % k,
-                        diffuse_color=color)
+                        diffuse_color=color,
+                    )
 
     return builder, mbp, scene_graph
 
-def build_nonpenetration_constraint(mbp, mbp_context_in_diagram, signed_distance_threshold):
-    ''' Given an MBP/SG pair and a signed distance threshold, returns a constraint
+
+def build_nonpenetration_constraint(
+    mbp, mbp_context_in_diagram, signed_distance_threshold
+):
+    """Given an MBP/SG pair and a signed distance threshold, returns a constraint
     function that takes a context and returns whether the MBP/SG in that configuration
-    has all bodies farther than the given threshold. '''
-    return MinimumDistanceUpperBoundConstraint(mbp, signed_distance_threshold, mbp_context_in_diagram)
+    has all bodies farther than the given threshold."""
+    return MinimumDistanceUpperBoundConstraint(
+        mbp, signed_distance_threshold, mbp_context_in_diagram
+    )
+
 
 def get_collisions(mbp, mbp_context_in_diagram):
     # Essentially the same logic as in ik/MinimumDistanceConstraint's distances evaluation.
     query_port = mbp.get_geometry_query_input_port()
-    assert query_port.HasValue(mbp_context_in_diagram), \
-        "Either the plant geometry_query_input_port() is not properly " \
-        "connected to the SceneGraph's output port, or the plant_context_ is " \
-        "incorrect. Please refer to AddMultibodyPlantSceneGraph on connecting " \
+    assert query_port.HasValue(mbp_context_in_diagram), (
+        "Either the plant geometry_query_input_port() is not properly "
+        "connected to the SceneGraph's output port, or the plant_context_ is "
+        "incorrect. Please refer to AddMultibodyPlantSceneGraph on connecting "
         "MultibodyPlant to SceneGraph."
+    )
     query_object = query_port.Eval(mbp_context_in_diagram)
     return query_object.ComputePointPairPenetration()
+
 
 def resolve_sg_proximity_id_to_mbp_id(sg, mbp, geometry_id):
     for model_k in range(mbp.num_model_instances()):
@@ -383,6 +428,7 @@ def resolve_sg_proximity_id_to_mbp_id(sg, mbp, geometry_id):
             if geometry_id in mbp.GetCollisionGeometriesForBody(mbp.get_body(body_k)):
                 return model_k, body_k
     raise ValueError("Geometry ID not registered by this MBP.")
+
 
 def expand_container_tree(full_tree, new_tree, current_node):
     # Given the original tree for reference and a new tree
@@ -396,37 +442,59 @@ def expand_container_tree(full_tree, new_tree, current_node):
         new_tree.add_node(child)
         new_tree.add_edge(current_node, child)
 
-        if (child.physics_geometry_info is not None and
-                child.physics_geometry_info.is_container):
+        if (
+            child.physics_geometry_info is not None
+            and child.physics_geometry_info.is_container
+        ):
             continue
         new_tree = expand_container_tree(full_tree, new_tree, child)
     return new_tree
 
+
 def split_tree_into_containers(scene_tree):
     # The roots will be each container + the root
     # of the overall tree.
-    roots = [node for node in scene_tree.nodes if
-            (len(list(scene_tree.predecessors(node))) == 0 or
-             (node.physics_geometry_info is not None and
-              node.physics_geometry_info.is_container))]
+    roots = [
+        node
+        for node in scene_tree.nodes
+        if (
+            len(list(scene_tree.predecessors(node))) == 0
+            or (
+                node.physics_geometry_info is not None
+                and node.physics_geometry_info.is_container
+            )
+        )
+    ]
     # Build the subtree from each root until it hits a terminal or
     # or a container.
     trees = []
     for root in roots:
-        # Manually add the first 
+        # Manually add the first
         new_tree = nx.DiGraph()
         new_tree.add_node(root)
         trees.append(expand_container_tree(scene_tree, new_tree, root))
     return trees
 
-def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001, return_node_model_ids=False):
+
+def compile_scene_tree_to_mbp_and_sg(
+    scene_tree, timestep=0.001, return_node_model_ids=False
+):
     builder = DiagramBuilder()
-    mbp, scene_graph = AddMultibodyPlantSceneGraph(
-        builder, MultibodyPlant(time_step=timestep))
+    multibody_plant_config = MultibodyPlantConfig(
+        time_step=timestep,
+        contact_model="hydroelastic_with_fallback",
+    )
+    mbp, scene_graph = AddMultibodyPlant(multibody_plant_config, builder)
+    mbp.set_discrete_contact_approximation(DiscreteContactApproximation.kLagged)
     parser = Parser(mbp)
-    # parser.package_map().PopulateFromEnvironment("ROS_PACKAGE_PATH")
-    parser.package_map().PopulateFromRosPackagePath()
+    package_file_abs_path = os.path.abspath(os.path.expanduser("anzu/package.xml"))
+    parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
     world_body = mbp.world_body()
+
+    # Add static models.
+    parser.AddModelsFromUrl(
+        "package://anzu/models/visuomotor/add_riverway_without_arms.dmd.yaml"
+    )
 
     node_to_free_body_ids_map = {}
     body_id_to_node_map = {}
@@ -441,8 +509,10 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001, return_node_mod
 
             # Don't have to do anything if this does not introduce geometry.
             has_models = len(phys_geom_info.model_paths) > 0
-            has_prim_geometry = (len(phys_geom_info.visual_geometry)
-                                 + len(phys_geom_info.collision_geometry)) > 0
+            has_prim_geometry = (
+                len(phys_geom_info.visual_geometry)
+                + len(phys_geom_info.collision_geometry)
+            ) > 0
             if not has_models and not has_prim_geometry:
                 continue
 
@@ -452,63 +522,83 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001, return_node_mod
             if has_prim_geometry:
                 # Contain this primitive geometry in a model instance.
                 model_id = mbp.AddModelInstance(
-                    node.name + "::model_%d" % len(node_model_ids))
+                    node.name + "::model_%d" % len(node_model_ids)
+                )
                 node_model_ids.append(model_id)
                 # Add a body for this node, and register any of the
                 # visual and collision geometry available.
                 # TODO(gizatt) This tree body index is built in to disambiguate names.
                 # But I forsee a name-to-stuff resolution crisis when inference time comes...
                 # this might get resolved by the solution to that.
-                body = mbp.AddRigidBody(name=node.name, model_instance=model_id,
-                                        M_BBo_B=phys_geom_info.spatial_inertia)
+                body = mbp.AddRigidBody(
+                    name=node.name,
+                    model_instance=model_id,
+                    M_BBo_B=phys_geom_info.spatial_inertia,
+                )
                 body_id_to_node_map[body.index()] = node
                 tf = torch_tf_to_drake_tf(node.tf)
                 if phys_geom_info.fixed:
-                    weld = mbp.WeldFrames(world_body.body_frame(),
-                                          body.body_frame(),
-                                          tf)
+                    weld = mbp.WeldFrames(
+                        world_body.body_frame(), body.body_frame(), tf
+                    )
                 else:
                     node_to_free_body_ids_map[node].append(body.index())
                     mbp.SetDefaultFreeBodyPose(body, tf)
-                for k, (tf, geometry, color) in enumerate(phys_geom_info.visual_geometry):
+                for k, (tf, geometry, color) in enumerate(
+                    phys_geom_info.visual_geometry
+                ):
                     mbp.RegisterVisualGeometry(
                         body=body,
                         X_BG=torch_tf_to_drake_tf(tf),
                         shape=geometry,
-                        name=node.name + "_vis_%03d" % k, 
-                        diffuse_color=color)
-                for k, (tf, geometry, friction) in enumerate(phys_geom_info.collision_geometry):
+                        name=node.name + "_vis_%03d" % k,
+                        diffuse_color=color,
+                    )
+                for k, (tf, geometry, friction) in enumerate(
+                    phys_geom_info.collision_geometry
+                ):
                     mbp.RegisterCollisionGeometry(
                         body=body,
                         X_BG=torch_tf_to_drake_tf(tf),
                         shape=geometry,
                         name=node.name + "_col_%03d" % k,
-                        coulomb_friction=friction)
+                        coulomb_friction=friction,
+                    )
 
             # Handle adding each model from sdf/urdf.
             if has_models:
-                for local_tf, model_path, root_body_name, q0_dict in phys_geom_info.model_paths:
+                for (
+                    local_tf,
+                    model_path,
+                    root_body_name,
+                    q0_dict,
+                ) in phys_geom_info.model_paths:
                     parser.SetAutoRenaming(True)
-                    model_id = parser.AddModels(
-                        resolve_catkin_package_path(parser.package_map(), model_path))[0]
+                    # model_id = parser.AddModels(
+                    #     resolve_catkin_package_path(parser.package_map(), model_path))[0]
+                    model_id = parser.AddModelsFromUrl(model_path)[0]
                     node_model_ids.append(model_id)
                     if root_body_name is None:
                         root_body_ind_possibilities = mbp.GetBodyIndices(model_id)
-                        assert len(root_body_ind_possibilities) == 1, \
-                            "Please supply root_body_name for model with path %s" % model_path
+                        assert len(root_body_ind_possibilities) == 1, (
+                            "Please supply root_body_name for model with path %s"
+                            % model_path
+                        )
                         root_body = mbp.get_body(root_body_ind_possibilities[0])
                     else:
                         root_body = mbp.GetBodyByName(
-                            name=root_body_name,
-                            model_instance=model_id)
+                            name=root_body_name, model_instance=model_id
+                        )
                     body_id_to_node_map[root_body.index()] = node
                     node_tf = torch_tf_to_drake_tf(node.tf)
                     # full_model_tf = node_tf.multiply(torch_tf_to_drake_tf(local_tf))
-                    full_model_tf = node_tf # This seems to be correct, not sure for the commented out logic.
+                    full_model_tf = node_tf  # This seems to be correct, not sure for the commented out logic.
                     if phys_geom_info.fixed:
-                        mbp.WeldFrames(world_body.body_frame(),
-                                       root_body.body_frame(),
-                                       full_model_tf)
+                        mbp.WeldFrames(
+                            world_body.body_frame(),
+                            root_body.body_frame(),
+                            full_model_tf,
+                        )
                     else:
                         node_to_free_body_ids_map[node].append(root_body.index())
                         mbp.SetDefaultFreeBodyPose(root_body, full_model_tf)
@@ -517,37 +607,52 @@ def compile_scene_tree_to_mbp_and_sg(scene_tree, timestep=0.001, return_node_mod
                         for joint_name in list(q0_dict.keys()):
                             q0_this = q0_dict[joint_name]
                             joint = mbp.GetMutableJointByName(
-                                joint_name, model_instance=model_id)
+                                joint_name, model_instance=model_id
+                            )
                             # Reshape to make Drake happy.
                             q0_this = q0_this.reshape(joint.num_positions(), 1)
                             joint.set_default_positions(q0_this)
 
     if return_node_model_ids:
-        return builder, mbp, scene_graph, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids
+        return (
+            builder,
+            mbp,
+            scene_graph,
+            node_to_free_body_ids_map,
+            body_id_to_node_map,
+            node_model_ids,
+        )
     return builder, mbp, scene_graph, node_to_free_body_ids_map, body_id_to_node_map
 
-def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_sim=False, zmq_url=None, prefix="projection", timestep=0.001, T=1.):
+
+def project_tree_to_feasibility(
+    tree,
+    constraints=[],
+    jitter_q=None,
+    do_forward_sim=False,
+    zmq_url=None,
+    prefix="projection",
+    timestep=0.001,
+    T=1.0,
+):
     # Mutates tree into tree with bodies in closest
     # nonpenetrating configuration.
-    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids = \
-        compile_scene_tree_to_mbp_and_sg(tree, timestep=timestep, return_node_model_ids=True)
+    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids = (
+        compile_scene_tree_to_mbp_and_sg(
+            tree, timestep=timestep, return_node_model_ids=True
+        )
+    )
     mbp.Finalize()
-    # Connect visualizer if requested. Wrap carefully to keep it
-    # from spamming the console.
-    # if zmq_url is not None:
-    #      with open(os.devnull, 'w') as devnull:
-    #         with contextlib.redirect_stdout(devnull):
-    #             visualizer = ConnectMeshcatVisualizer(builder, sg, zmq_url=zmq_url, prefix=prefix)
     diagram = builder.Build()
     diagram_context = diagram.CreateDefaultContext()
     mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
     q0 = mbp.GetPositions(mbp_context)
     nq = len(q0)
-    
+
     if nq == 0:
         logging.warn("Generated MBP had no positions.")
         return None
-    
+
     # Set up projection NLP.
     ik = InverseKinematics(mbp, mbp_context)
     q_dec = ik.q()
@@ -562,28 +667,27 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     # Add constraints for rotations to stay constant. Only want to optimize translations.
     for model in node_model_ids:
         body_indices = mbp.GetBodyIndices(model)
-        if len(body_indices) >1:
+        if len(body_indices) > 1:
             continue
-        
+
         body = mbp.get_body(body_indices[0])
         if not body.is_floating():
             continue
 
         q_start_idx = body.floating_positions_start()
-        model_quat_dec = q_dec[q_start_idx:q_start_idx+4]
+        model_quat_dec = q_dec[q_start_idx : q_start_idx + 4]
 
         model_q = mbp.GetPositions(mbp_context, model)
         model_quat = model_q[:4]
 
         prog.AddBoundingBoxConstraint(
-            model_quat, # lb
-            model_quat, # ub
-            model_quat_dec, # vars
+            model_quat,  # lb
+            model_quat,  # ub
+            model_quat_dec,  # vars
         )
 
-
     # Nonpenetration constraint.
-    ik.AddMinimumDistanceLowerBoundConstraint(0.001, 0.0001)
+    ik.AddMinimumDistanceLowerBoundConstraint(0.0, 0.03)
 
     # Other requested constraints.
     for constraint in constraints:
@@ -591,26 +695,25 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     # Initial guess, which can be slightly randomized by request.
     q_guess = q0
     if jitter_q:
-        q_guess = q_guess + np.random.normal(0., jitter_q, size=q_guess.size)
-        
+        q_guess = q_guess + np.random.normal(0.0, jitter_q, size=q_guess.size)
+
     prog.SetInitialGuess(q_dec, q_guess)
-    
+
     # Solve.
-    
+
     solver = SnoptSolver()
     options = SolverOptions()
     # logfile = "/tmp/snopt.log"
     # os.system("rm %s" % logfile)
     # options.SetOption(solver.id(), "Print file", logfile)
-    options.SetOption(solver.id(), "Major feasibility tolerance", 1E-6)
-    options.SetOption(solver.id(), "Major optimality tolerance", 1E-6)
-    options.SetOption(solver.id(), "Major iterations limit", 10000)
+    options.SetOption(solver.id(), "Major feasibility tolerance", 1e-3)
+    options.SetOption(solver.id(), "Major optimality tolerance", 1e-3)
+    options.SetOption(solver.id(), "Major iterations limit", 5000)
 
     result = solver.Solve(prog, None, options)
     if not result.is_success():
         logging.warn("Projection failed.")
-        # print("Logfile: ")
-
+        return None
 
     # DEBUG Logic
     # with open(logfile) as f: log = f.read()
@@ -621,99 +724,91 @@ def project_tree_to_feasibility(tree, constraints=[], jitter_q=None, do_forward_
     # pairs = query_object.ComputeSignedDistancePairwiseClosestPoints(max_distance=-1e-3)
     # collision_dists = [p.distance for p in pairs]
     # import IPython; IPython.embed(); exit()
-    
+
     # TODO: This is suboptimal. Ideally, we don't include rotations in the decision variables!
     # If forward sim is requested, do a quick forward sim to get to
     # a statically stable config.
     if do_forward_sim:
         sim = Simulator(diagram, diagram_context)
-        sim.set_target_realtime_rate(1000.)
+        sim.set_target_realtime_rate(1000.0)
 
         try:
             sim.AdvanceTo(T)
         except:
             logging.warn("Forward sim failed.")
             return None
-        
+
     # Reload poses back into tree
     free_bodies = mbp.GetFloatingBaseBodies()
     for body_id, node in body_id_to_node_map.items():
         if body_id not in free_bodies:
             continue
-        node.tf = drake_tf_to_torch_tf(mbp.GetFreeBodyPose(mbp_context, mbp.get_body(body_id)))
+        node.tf = drake_tf_to_torch_tf(
+            mbp.GetFreeBodyPose(mbp_context, mbp.get_body(body_id))
+        )
     return tree
 
 
-def project_tree_to_feasibility_via_sim(tree, constraints=[], zmq_url=None, prefix="projection", timestep=0.0005, T=10.):
+def project_tree_to_feasibility_via_sim(
+    tree, constraints=[], zmq_url=None, prefix="projection", timestep=0.0005, T=10.0
+):
     # Mutates tree into tree with bodies in closest
     # nonpenetrating configuration.
-    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = \
+    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = (
         compile_scene_tree_to_mbp_and_sg(tree, timestep=timestep)
+    )
     mbp.Finalize()
-    # Connect visualizer if requested. Wrap carefully to keep it
-    # from spamming the console.
-    if zmq_url is not None:
-         with open(os.devnull, 'w') as devnull:
-            with contextlib.redirect_stdout(devnull):
-                visualizer = ConnectMeshcatVisualizer(builder, sg, zmq_url=zmq_url, prefix=prefix)
 
     # Forward sim under langevin forces
     force_source = builder.AddSystem(
-        DecayingForceToDesiredConfigSystem(mbp, mbp.GetPositions(mbp.CreateDefaultContext()))
+        DecayingForceToDesiredConfigSystem(
+            mbp, mbp.GetPositions(mbp.CreateDefaultContext())
+        )
     )
-    builder.Connect(mbp.get_state_output_port(),
-                force_source.get_input_port(0))
-    builder.Connect(force_source.get_output_port(0),
-                mbp.get_applied_spatial_force_input_port())
+    builder.Connect(mbp.get_state_output_port(), force_source.get_input_port(0))
+    builder.Connect(
+        force_source.get_output_port(0), mbp.get_applied_spatial_force_input_port()
+    )
 
     diagram = builder.Build()
     diagram_context = diagram.CreateDefaultContext()
     mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
     q0 = mbp.GetPositions(mbp_context)
     nq = len(q0)
-    
+
     if nq == 0:
         logging.warn("Generated MBP had no positions.")
         return tree
-    
-    # Make 'safe' initial configuration that randomly arranges objects vertically
-    #k = 0
-    #all_pos = []
-    #for node in tree:
-    #    for body_id in node_to_free_body_ids_map[node]:
-    #        body = mbp.get_body(body_id)
-    #        tf = mbp.GetFreeBodyPose(mbp_context, body)
-    #        tf = RigidTransform(p=tf.translation() + np.array([0., 0., 1. + k*0.5]), R=tf.rotation())
-    #        mbp.SetFreeBodyPose(mbp_context, body, tf)
-    #        k += 1
 
     sim = Simulator(diagram, diagram_context)
     sim.set_target_realtime_rate(1000)
     sim.AdvanceTo(T)
-    
+
     # Reload poses back into tree
     free_bodies = mbp.GetFloatingBaseBodies()
     for body_id, node in body_id_to_node_map.items():
         if body_id not in free_bodies:
             continue
-        node.tf = drake_tf_to_torch_tf(mbp.GetFreeBodyPose(mbp_context, mbp.get_body(body_id)))
+        node.tf = drake_tf_to_torch_tf(
+            mbp.GetFreeBodyPose(mbp_context, mbp.get_body(body_id))
+        )
     return tree
 
 
 def rejection_sample_structure_to_feasibility(
-        tree, constraints=[], max_n_iters=100,
-        do_forward_sim=False, timestep=0.001, T=1.):
+    tree, constraints=[], max_n_iters=100, do_forward_sim=False, timestep=0.001, T=1.0
+):
     # Pre-build prog to check ourselves against
-    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = \
+    builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map = (
         compile_scene_tree_to_mbp_and_sg(tree, timestep=timestep)
+    )
     mbp.Finalize()
     floating_base_bodies = mbp.GetFloatingBaseBodies()
     diagram = builder.Build()
     diagram_context = diagram.CreateDefaultContext()
     mbp_context = diagram.GetMutableSubsystemContext(mbp, diagram_context)
     q0 = mbp.GetPositions(mbp_context)
-    nq = len(q0)
-    
+
     # Set up projection NLP.
     ik = InverseKinematics(mbp, mbp_context)
     q_dec = ik.q()
@@ -723,8 +818,9 @@ def rejection_sample_structure_to_feasibility(
     # Other requested constraints.
     for constraint in constraints:
         constraint.add_to_ik_prog(tree, ik, mbp, mbp_context, node_to_free_body_ids_map)
-    
+
     from pyro.contrib.autoname import scope
+
     best_q = q0
     best_violation = np.inf
     for k in range(max_n_iters):
@@ -738,17 +834,27 @@ def rejection_sample_structure_to_feasibility(
                 node_queue.append(child)
         for node, body_ids in node_to_free_body_ids_map.items():
             for body_id in body_ids:
-                mbp.SetFreeBodyPose(mbp_context, mbp.get_body(body_id), torch_tf_to_drake_tf(node.tf))
+                mbp.SetFreeBodyPose(
+                    mbp_context, mbp.get_body(body_id), torch_tf_to_drake_tf(node.tf)
+                )
         q = mbp.GetPositions(mbp_context)
         all_bindings = prog.GetAllConstraints()
         satisfied = prog.CheckSatisfied(all_bindings, q)
         if satisfied:
             return tree, True
         # Otherwise compute violation
-        evals = np.concatenate([binding.evaluator().Eval(q).flatten() for binding in all_bindings])
-        lbs = np.concatenate([binding.evaluator().lower_bound().flatten() for binding in all_bindings])
-        ubs = np.concatenate([binding.evaluator().upper_bound().flatten() for binding in all_bindings])
-        viols = np.maximum(np.clip(lbs - evals, 0., np.inf), np.clip(evals-ubs, 0., np.inf))
+        evals = np.concatenate(
+            [binding.evaluator().Eval(q).flatten() for binding in all_bindings]
+        )
+        lbs = np.concatenate(
+            [binding.evaluator().lower_bound().flatten() for binding in all_bindings]
+        )
+        ubs = np.concatenate(
+            [binding.evaluator().upper_bound().flatten() for binding in all_bindings]
+        )
+        viols = np.maximum(
+            np.clip(lbs - evals, 0.0, np.inf), np.clip(evals - ubs, 0.0, np.inf)
+        )
         total_violation = np.sum(viols)
         if total_violation < best_violation:
             print("Updating best viol to ", best_violation)
@@ -758,12 +864,18 @@ def rejection_sample_structure_to_feasibility(
     mbp.SetPositions(mbp_context, q)
     for body_id, node in body_id_to_node_map.items():
         if body_id in floating_base_bodies:
-            node.tf = drake_tf_to_torch_tf(mbp.GetFreeBodyPose(mbp_context, mbp.get_body(body_id)))
+            node.tf = drake_tf_to_torch_tf(
+                mbp.GetFreeBodyPose(mbp_context, mbp.get_body(body_id))
+            )
     return tree, False
-    
-def simulate_scene_tree(scene_tree, T, timestep=0.001, target_realtime_rate=1.0, meshcat=None):
+
+
+def simulate_scene_tree(
+    scene_tree, T, timestep=0.001, target_realtime_rate=1.0, meshcat=None
+):
     builder, mbp, scene_graph, _, _ = compile_scene_tree_to_mbp_and_sg(
-        scene_tree, timestep=timestep)
+        scene_tree, timestep=timestep
+    )
     mbp.Finalize()
 
     # if meshcat:
@@ -775,4 +887,3 @@ def simulate_scene_tree(scene_tree, T, timestep=0.001, target_realtime_rate=1.0,
     sim = Simulator(diagram)
     sim.set_target_realtime_rate(target_realtime_rate)
     sim.AdvanceTo(T)
-

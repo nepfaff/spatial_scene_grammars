@@ -1,22 +1,28 @@
+import logging
+import typing as tp
+from collections import OrderedDict, namedtuple
 from copy import deepcopy
-from collections import namedtuple, OrderedDict
 from dataclasses import dataclass
 from functools import partial
+
 import networkx as nx
 import numpy as np
-import logging
-
 import pyro
-from pyro.contrib.autoname import scope, name_count
 import pyro.distributions as dist
 import torch
 import torch.distributions.constraints as constraints
+from pyro.contrib.autoname import name_count, scope
 
-from .torch_utils import ConstrainedParameter
-from .nodes import (Node, TerminalNode,
-    AndNode, OrNode, RepeatingSetNode, IndependentSetNode
+from .nodes import (
+    AndNode,
+    IndependentSetNode,
+    Node,
+    OrNode,
+    RepeatingSetNode,
+    TerminalNode,
 )
 from .rules import ProductionRule
+from .torch_utils import ConstrainedParameter
 
 
 def get_tree_root(tree):
@@ -42,9 +48,9 @@ class SceneTree(nx.DiGraph):
 
     @staticmethod
     def make_from_observed_nodes(observed_nodes):
-        ''' Constructs a SceneTree that contains the observed nodes.
+        """Constructs a SceneTree that contains the observed nodes.
         A scene tree constructed like this will have very limited
-        functionality, but can be used for visualization. '''
+        functionality, but can be used for visualization."""
         tree = SceneTree()
         for node in observed_nodes:
             tree.add_node(node)
@@ -54,6 +60,7 @@ class SceneTree(nx.DiGraph):
     def trace(self):
         assert self._trace is not None, "Trace not recorded for this tree."
         return self._trace
+
     @trace.setter
     def trace(self, trace):
         self._trace = trace
@@ -70,15 +77,16 @@ class SceneTree(nx.DiGraph):
         assert parent in self.nodes
         return sorted(list(self.successors(parent)), key=lambda x: x.rule_k)
 
-    def get_children_recursive(self, parent):
+    def get_children_recursive(self, parent, type_filter: tp.Optional[tp.Type] = None):
         unexpanded = [parent]
         all_children = []
         while len(unexpanded) > 0:
             new_children = self.get_children(unexpanded.pop(0))
+            if type_filter is not None:
+                new_children = [c for c in new_children if isinstance(c, type_filter)]
             all_children += new_children
             unexpanded += new_children
         return all_children
-
 
     def get_rule_for_child(self, parent, child):
         if isinstance(parent, RepeatingSetNode):
@@ -86,12 +94,15 @@ class SceneTree(nx.DiGraph):
         elif isinstance(parent, (AndNode, OrNode, IndependentSetNode)):
             return parent.rules[child.rule_k]
         else:
-            raise ValueError("Parent %s of child %s is of bad type for getting rules." % (parent, child))
+            raise ValueError(
+                "Parent %s of child %s is of bad type for getting rules."
+                % (parent, child)
+            )
 
     def get_children_and_rules(self, parent):
-        ''' Return the child nodes and their corresponding
+        """Return the child nodes and their corresponding
         rules (selected from the parent node rule list according
-        to the parent type and child rule_k index) as matching lists. '''
+        to the parent type and child rule_k index) as matching lists."""
         children = self.get_children(parent)
         # Get child rule list.
         if isinstance(parent, RepeatingSetNode):
@@ -121,7 +132,7 @@ class SceneTree(nx.DiGraph):
         while len(list(self.predecessors(root))) > 0:
             root = list(self.predecessors(root))[0]
             k += 1
-            if (k > 10000):
+            if k > 10000:
                 raise ValueError(">10k iters when finding root. Not a tree?")
         return root
 
@@ -130,7 +141,7 @@ class SceneTree(nx.DiGraph):
 
     def score(self, include_discrete=True, include_continuous=True, verbose=False):
         # Compute total score of parents and children.
-        total_score = torch.tensor(0.)
+        total_score = torch.tensor(0.0)
         root = self.get_root()
         for node in self.nodes:
             if node is not root:
@@ -153,7 +164,9 @@ class SceneTree(nx.DiGraph):
                     elif isinstance(node, RepeatingSetNode):
                         rule = node.rule
                     else:
-                        raise ValueError("Unknown node type %s has children." % type(node))
+                        raise ValueError(
+                            "Unknown node type %s has children." % type(node)
+                        )
                     contrib = rule.score_child(node, child, verbose=verbose)
                     total_score = total_score + contrib
                     if verbose:
@@ -162,7 +175,7 @@ class SceneTree(nx.DiGraph):
 
 
 class SpatialSceneGrammar(torch.nn.Module):
-    '''
+    """
     Manages a scene grammar that produces scene trees by composition
     of subclasses of the node types in this repo.
 
@@ -175,11 +188,16 @@ class SpatialSceneGrammar(torch.nn.Module):
             that node type's rules. E.g. if a node type uses
             a BoundingBox XYZ offset rule, the lower and upper bound
             of that BoundingBox.
-    '''
+    """
 
-    def __init__(self, root_node_type, root_node_tf, sample_params_from_prior=False,
-                 do_sanity_checks=True):
-        ''' Given a root node type and its tf, prepares this grammar for use. '''
+    def __init__(
+        self,
+        root_node_type,
+        root_node_tf,
+        sample_params_from_prior=False,
+        do_sanity_checks=True,
+    ):
+        """Given a root node type and its tf, prepares this grammar for use."""
         super().__init__()
         self.root_node_type = root_node_type
         self.root_node_tf = root_node_tf
@@ -204,10 +222,14 @@ class SpatialSceneGrammar(torch.nn.Module):
                     # of this node.
                     init_value = node_type(tf=torch.eye(4)).parameters
                     if len(init_value) > 0:
-                        assert torch.all(torch.isfinite(param_prior.log_prob(init_value))), "Bad initial value / prior match in node type %s" % node_type
+                        assert torch.all(
+                            torch.isfinite(param_prior.log_prob(init_value))
+                        ), (
+                            "Bad initial value / prior match in node type %s"
+                            % node_type
+                        )
                 self.params_by_node_type[node_type.__name__] = ConstrainedParameter(
-                    init_value=init_value,
-                    constraint=param_prior.support
+                    init_value=init_value, constraint=param_prior.support
                 )
             # Set up rule parameters.
             rules = node_type.generate_rules()
@@ -219,26 +241,38 @@ class SpatialSceneGrammar(torch.nn.Module):
                 xyz_param_prior_dict, rot_param_prior_dict = rule.get_parameter_prior()
 
                 if sample_params_from_prior:
-                    xyz_param_value_dict = {k: v.sample() for k, v in xyz_param_prior_dict.items()}
-                    rot_param_value_dict = {k: v.sample() for k, v in rot_param_prior_dict.items()}
+                    xyz_param_value_dict = {
+                        k: v.sample() for k, v in xyz_param_prior_dict.items()
+                    }
+                    rot_param_value_dict = {
+                        k: v.sample() for k, v in rot_param_prior_dict.items()
+                    }
                 else:
                     # Grab the default parameter value from the instantiated rule.
                     xyz_param_value_dict, rot_param_value_dict = rule.parameters
                 xyz_param_dict = torch.nn.ModuleDict(
-                    {k: ConstrainedParameter(
-                        init_value = xyz_param_value_dict[k],
-                        constraint = xyz_param_prior_dict[k].support
-                    ) for k in xyz_param_prior_dict.keys()}
+                    {
+                        k: ConstrainedParameter(
+                            init_value=xyz_param_value_dict[k],
+                            constraint=xyz_param_prior_dict[k].support,
+                        )
+                        for k in xyz_param_prior_dict.keys()
+                    }
                 )
                 rot_param_dict = torch.nn.ModuleDict(
-                    {k: ConstrainedParameter(
-                        init_value = rot_param_value_dict[k],
-                        constraint = rot_param_prior_dict[k].support
-                    ) for k in rot_param_prior_dict.keys()}
+                    {
+                        k: ConstrainedParameter(
+                            init_value=rot_param_value_dict[k],
+                            constraint=rot_param_prior_dict[k].support,
+                        )
+                        for k in rot_param_prior_dict.keys()
+                    }
                 )
-                rule_params.append(torch.nn.ModuleList([xyz_param_dict, rot_param_dict]))
+                rule_params.append(
+                    torch.nn.ModuleList([xyz_param_dict, rot_param_dict])
+                )
             self.rule_params_by_node_type[node_type.__name__] = rule_params
-            
+
     def print_params(self, node_names=None):
         for node_type in self.all_types:
             if node_names is not None:
@@ -247,8 +281,13 @@ class SpatialSceneGrammar(torch.nn.Module):
             print("\t%s:" % node_type.__name__)
             constrained_params = self.params_by_node_type[node_type.__name__]
             if constrained_params is not None:
-                print("\t\t%s: %s" % ("child weights", constrained_params().detach().cpu().numpy()))
-            for k, (xyz_param_dict, rot_param_dict) in enumerate(self.rule_params_by_node_type[node_type.__name__]):
+                print(
+                    "\t\t%s: %s"
+                    % ("child weights", constrained_params().detach().cpu().numpy())
+                )
+            for k, (xyz_param_dict, rot_param_dict) in enumerate(
+                self.rule_params_by_node_type[node_type.__name__]
+            ):
                 print("\t\tRule %d:" % (k))
                 for k, v in xyz_param_dict.items():
                     print("\t\t\tXYZ %s: %s" % (k, v()))
@@ -258,7 +297,7 @@ class SpatialSceneGrammar(torch.nn.Module):
     def _collect_all_types_in_grammar(self):
         # Similar to supertree logic, but doesn't track supertree.
         # Needs to instantiate nodes to get their rule lists.
-        root = self.root_node_type(tf = torch.eye(4))
+        root = self.root_node_type(tf=torch.eye(4))
         all_types = set()
         input_queue = [root]
         while len(input_queue) > 0:
@@ -275,10 +314,11 @@ class SpatialSceneGrammar(torch.nn.Module):
                 # I don't think this is fundamental, but making sure grammars
                 # satisfy this assumption makes my parsing procedures a
                 # little easier to write.
-                assert rule.child_type is not self.root_node_type,\
-                    "The root type shouldn't be produced by any node."
+                assert (
+                    rule.child_type is not self.root_node_type
+                ), "The root type shouldn't be produced by any node."
                 if rule.child_type not in all_types:
-                    input_queue.append(rule.child_type(tf = torch.eye(4)))
+                    input_queue.append(rule.child_type(tf=torch.eye(4)))
         return all_types
 
     def _set_node_parameters(self, node, detach):
@@ -293,7 +333,9 @@ class SpatialSceneGrammar(torch.nn.Module):
                 constrained_params = constrained_params.detach()
             node.parameters = constrained_params
         # Rule params
-        unconstrained_params_by_rule = self.rule_params_by_node_type[type(node).__name__]
+        unconstrained_params_by_rule = self.rule_params_by_node_type[
+            type(node).__name__
+        ]
         for xyz_and_rot_params, rule in zip(unconstrained_params_by_rule, node.rules):
             # This rule has XYZ and Rotation params. Resolve them to constrained
             # values; then detach if requested, before feeding them to the
@@ -303,14 +345,14 @@ class SpatialSceneGrammar(torch.nn.Module):
                 unconstrained_xyz_params = {
                     k: v().detach() for k, v in constrained_xyz_params.items()
                 }
-                unconstrained_rot_params  = {
+                unconstrained_rot_params = {
                     k: v().detach() for k, v in constrained_rot_params.items()
                 }
             else:
                 unconstrained_xyz_params = {
                     k: v() for k, v in constrained_xyz_params.items()
                 }
-                unconstrained_rot_params  = {
+                unconstrained_rot_params = {
                     k: v() for k, v in constrained_rot_params.items()
                 }
             rule.parameters = (unconstrained_xyz_params, unconstrained_rot_params)
@@ -349,8 +391,14 @@ class SpatialSceneGrammar(torch.nn.Module):
         for node in tree.nodes:
             self._set_node_parameters(node, detach=detach)
 
-    def make_super_tree_from_root_node_type(self, root_node_type, root_node_tf, max_recursion_depth=15, detach=False,
-                                            terminate_at_observed=False):
+    def make_super_tree_from_root_node_type(
+        self,
+        root_node_type,
+        root_node_tf,
+        max_recursion_depth=15,
+        detach=False,
+        terminate_at_observed=False,
+    ):
         # Forms a graph of nodes for which any actual sampled tree would be a subgraph.
         # This form exposes some special cases that can be useful in e.g. parsing:
         #  - Ability to start a supertree from any node type in the grammar.
@@ -398,26 +446,27 @@ class SpatialSceneGrammar(torch.nn.Module):
             self.root_node_tf,
             max_recursion_depth=max_recursion_depth,
             detach=detach,
-            terminate_at_observed=False
+            terminate_at_observed=False,
         )
 
+
 def apply_decoration_rules_to_tree(tree, decoration_mapping):
-    '''
-        tree: A SceneTree, which will be modified in-place.
-        decoration_mapping: A dict mapping node types to
-            new node types.
+    """
+    tree: A SceneTree, which will be modified in-place.
+    decoration_mapping: A dict mapping node types to
+        new node types.
 
-        Randomly applies decoration rules to an existing scene tree.
-        For each node in the existing tree, changes its geometry type (if present)
-        to fixed to freeze it in place.
+    Randomly applies decoration rules to an existing scene tree.
+    For each node in the existing tree, changes its geometry type (if present)
+    to fixed to freeze it in place.
 
-        Then looks up each existing node in the tree in the decoration mapping:
-        for each node with a mapping, adds a new node to the tree of the mapped
-        type at the same TF as the original node.
+    Then looks up each existing node in the tree in the decoration mapping:
+    for each node with a mapping, adds a new node to the tree of the mapped
+    type at the same TF as the original node.
 
-        Finally, recursively expands the set of new decoration nodes following
-        their built-in rules.
-    '''
+    Finally, recursively expands the set of new decoration nodes following
+    their built-in rules.
+    """
     # Freeze existing nodes.
     for node in tree.nodes:
         if node.physics_geometry_info is not None:
