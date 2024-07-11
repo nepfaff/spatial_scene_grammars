@@ -11,7 +11,7 @@ from spatial_scene_grammars.scene_grammar import SceneTree
 
 
 def main(dataset_pickle_path: str, verbose: bool):
-    assert dataset_pickle_path.endswith(".pickle")
+    assert dataset_pickle_path.endswith(".pickle") or dataset_pickle_path.endswith(".pkl")
 
     target_dataset_trees: List[SceneTree] = []
 
