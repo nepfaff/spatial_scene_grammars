@@ -95,7 +95,7 @@ def sample_realistic_scene(
         return None, good_tree
 
     feasible_tree = project_tree_to_feasibility(
-        deepcopy(good_tree), do_forward_sim=True, timestep=0.001, T=1.5
+        deepcopy(good_tree), do_forward_sim=True, timestep=0.001, T=2.5
     )
     return feasible_tree, good_tree
 
