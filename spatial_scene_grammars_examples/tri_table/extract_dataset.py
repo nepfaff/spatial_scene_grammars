@@ -1,3 +1,28 @@
+"""
+Script for extracting a dataset to make it independent of the `spatial_scene_grammars`
+library.
+The dataset is saved in dictionary form, where each object is represented by a
+dictionary with the following keys:
+- "transform": The 4x4 transformation matrix of the object.
+- "model_path": The path to the object's model.
+
+
+Optionally also filtes the dataset for failure cases:
+
+Considered failure cases are:
+- Shared objects with non-zero rotations about the roll and pitch axes
+- Shared objects with too high z-translation
+
+Only the affected object is removed. The scene is removed if removing the object leads
+to fewer than 3 objects remaining.
+
+Shared objects are:
+- SharedPlate
+- SharedBowl
+- CerealBox
+- Jug
+"""
+
 import argparse
 import pickle
 from typing import List
@@ -8,10 +33,14 @@ from tqdm import tqdm
 from spatial_scene_grammars.drake_interop import PhysicsGeometryInfo
 from spatial_scene_grammars.nodes import Node
 from spatial_scene_grammars.scene_grammar import SceneTree
+from scipy.spatial.transform import Rotation as rot
+import spatial_scene_grammars_examples
 
 
-def main(dataset_pickle_path: str, verbose: bool):
-    assert dataset_pickle_path.endswith(".pickle") or dataset_pickle_path.endswith(".pkl")
+def main(dataset_pickle_path: str, filter: bool, verbose: bool):
+    assert dataset_pickle_path.endswith(".pickle") or dataset_pickle_path.endswith(
+        ".pkl"
+    )
 
     target_dataset_trees: List[SceneTree] = []
 
@@ -19,7 +48,7 @@ def main(dataset_pickle_path: str, verbose: bool):
     with open(dataset_pickle_path, "rb") as f:
         while 1:
             try:
-                tree =  pickle.load(f)
+                tree = pickle.load(f)
                 if isinstance(tree, SceneTree):
                     target_dataset_trees.append(tree)
                 elif isinstance(tree, tuple):
@@ -35,8 +64,91 @@ def main(dataset_pickle_path: str, verbose: bool):
         tree.get_observed_nodes() for tree in target_dataset_trees
     ]
 
+    if filter:
+        filtered_observed_nodes = []
+        num_objs_removed = 0
+        for i, nodes in enumerate(tqdm(observed_nodes, desc="Filtering scenes")):
+            filtered_nodes = []
+            for node in nodes:
+                translation = node.translation
+                euler = rot.from_matrix(node.rotation).as_euler("xyz")
+
+                # Not sure why need full path here for this to work.
+                if (
+                    isinstance(
+                        node,
+                        spatial_scene_grammars_examples.tri_table.grammar.SharedPlate,
+                    )
+                    or isinstance(
+                        node,
+                        spatial_scene_grammars_examples.tri_table.grammar.SharedBowl,
+                    )
+                    or isinstance(
+                        node,
+                        spatial_scene_grammars_examples.tri_table.grammar.CerealBox,
+                    )
+                ):
+                    # Should have close to zero translation.
+                    if not np.allclose(translation[2], 0.0, atol=3e-3, rtol=0.0):
+                        if verbose:
+                            print(
+                                "Warning: Expected zero z-translation for scene "
+                                f"{i}, {node}, got {translation[2]}."
+                            )
+                        num_objs_removed += 1
+                        continue
+
+                    # Should have close to zero roll and pitch.
+                    if not np.allclose(
+                        euler[0], 0.0, atol=1e-2, rtol=0.0
+                    ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                        if verbose:
+                            print(
+                                "Warning: Expected zero roll and pitch for scene "
+                                f"{i}, {node}, got {euler[:2]}."
+                            )
+                        num_objs_removed += 1
+                        continue
+
+                if isinstance(
+                    node, spatial_scene_grammars_examples.tri_table.grammar.Jug
+                ):
+                    # Should have close to 0.091m translation in z (frame at center).
+                    if not np.allclose(translation[2], 0.091, atol=3e-3, rtol=0.0):
+                        if verbose:
+                            print(
+                                "Warning: Expected 0.091m translation in z for scene "
+                                f"{i}, {node}, got {translation[2]}."
+                            )
+                        num_objs_removed += 1
+                        continue
+
+                    # Should have close to zero roll and pitch.
+                    if not np.allclose(
+                        euler[0], 0.0, atol=1e-2, rtol=0.0
+                    ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                        if verbose:
+                            print(
+                                "Warning: Expected zero roll and pitch for scene "
+                                f"{i}, {node}, got {euler[:2]}."
+                            )
+                        num_objs_removed += 1
+                        continue
+
+                filtered_nodes.append(node)
+
+            # Keep all scenes with more than 3 objects.
+            if len(filtered_nodes) >= 3:
+                filtered_observed_nodes.append(filtered_nodes)
+
+        # Print statistics.
+        num_scenes_removed = len(observed_nodes) - len(filtered_observed_nodes)
+        print(f"Removed {num_objs_removed} objects and {num_scenes_removed} scenes.")
+    else:
+        filtered_observed_nodes = observed_nodes
+
     observed_node_data: List[List[dict]] = []
-    for nodes in tqdm(observed_nodes, desc="Processing scenes"):
+    for nodes in tqdm(filtered_observed_nodes, desc="Processing scenes"):
         data = []
         for node in nodes:
             translation = node.translation
@@ -78,8 +190,9 @@ def main(dataset_pickle_path: str, verbose: bool):
 
     print(f"Dataset has {len(observed_node_data)} examples.")
 
-    save_path = dataset_pickle_path.replace(".pickle", "_dict_form.pickle")
-    save_path = dataset_pickle_path.replace(".pkl", "_dict_form.pkl")
+    postfix = f"{'_filtered' if filter else ''}_dict_form"
+    save_path = dataset_pickle_path.replace(".pickle", f"{postfix}.pickle")
+    save_path = save_path.replace(".pkl", f"{postfix}.pkl")
     with open(save_path, "wb") as f:
         pickle.dump(observed_node_data, f)
     print(f"Saved dataset in dictionary form to {save_path}.")
@@ -93,7 +206,12 @@ if __name__ == "__main__":
         help="Path to the dataset pickle file to extract the dataset from.",
     )
     parser.add_argument(
+        "--filter",
+        action="store_true",
+        help="Filter out failure cases.",
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="Print more information."
     )
     args = parser.parse_args()
-    main(args.dataset_pickle_path, args.verbose)
+    main(args.dataset_pickle_path, args.filter, args.verbose)

@@ -50,6 +50,8 @@ def main():
     for dataset in datasets:
         combined_dataset.extend(dataset)
 
+    print(f"Combined dataset has {len(combined_dataset)} examples.")
+
     # Save combined dataset.
     with open(out_path, "wb") as f:
         pickle.dump(combined_dataset, f)
