@@ -1,1 +1,6 @@
 anzu
+anzu.zip
+raw_datasets
+extracted_datasets
+*.pkl
+*.pickle

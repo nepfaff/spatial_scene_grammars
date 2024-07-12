@@ -526,8 +526,8 @@ class SharedPlates(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.8, max_children=2, start_at_one=False
-            ),  # No plate with probability of ~0.8
+                p=0.7, max_children=2, start_at_one=False
+            ),  # No plate with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
         )
@@ -552,8 +552,8 @@ class SharedBowls(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.8, max_children=2, start_at_one=False
-            ),  # No bowl with probability of ~0.8
+                p=0.7, max_children=2, start_at_one=False
+            ),  # No bowl with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
         )

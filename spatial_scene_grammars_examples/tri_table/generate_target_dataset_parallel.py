@@ -120,8 +120,8 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_save_file = "tri_table_scenes_5k_batch1.pkl"
-    N = 5000
+    dataset_save_file = "tri_table_scenes_10k_batch2.pkl"
+    N = 10000
     processes = 27
 
     # Don't change this to prevent memory issues.
