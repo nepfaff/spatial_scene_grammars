@@ -322,7 +322,7 @@ class TopOfPlate(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.4, 0.6]),
+            rule_probs=torch.tensor([0.2, 0.2, 0.6]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -332,6 +332,17 @@ class TopOfPlate(OrNode):
         rules = [
             ProductionRule(
                 child_type=Spoon,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([-0.015, 0.025, 0.013]),
+                    variance=torch.tensor([1e-16, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RollPitchYaw(np.array([0.0, 0.0, np.pi / 2.0])).ToRotationMatrix(),
+                    np.array([1e6, 1e6, 100]),
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=TeaSpoon,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([-0.015, 0.025, 0.013]),
                     variance=torch.tensor([1e-16, 0.01**2, 1e-16]),
@@ -460,7 +471,7 @@ class RightOfBowl(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([1 / 3, 2 / 3]),
+            rule_probs=torch.tensor([1 / 6, 1 / 6, 2 / 3]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -470,6 +481,17 @@ class RightOfBowl(OrNode):
         rules = [
             ProductionRule(
                 child_type=Spoon,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.05, 0.01, 0.01]),
+                    variance=torch.tensor([0.01**2, 1e-16, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(),
+                    np.array([1e6, 1e6, 100]),
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=TeaSpoon,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.05, 0.01, 0.01]),
                     variance=torch.tensor([0.01**2, 1e-16, 1e-16]),
@@ -492,7 +514,7 @@ class TopOfBowl(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([1 / 3, 2 / 3]),
+            rule_probs=torch.tensor([1 / 6, 1 / 6, 2 / 3]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -502,6 +524,17 @@ class TopOfBowl(OrNode):
         rules = [
             ProductionRule(
                 child_type=Spoon,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([-0.01, 0.02, 0.01]),
+                    variance=torch.tensor([1e-16, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RollPitchYaw(np.array([0.0, 0.0, np.pi / 2.0])).ToRotationMatrix(),
+                    np.array([1e6, 1e6, 100]),
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=TeaSpoon,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([-0.01, 0.02, 0.01]),
                     variance=torch.tensor([1e-16, 0.01**2, 1e-16]),
@@ -808,6 +841,16 @@ class Spoon(TerminalNode):
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
             "package://anzu/models/home_kitchen/spoons/cambridge_jubilee_stainless_plastic_dinner_spoon.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class TeaSpoon(TerminalNode):
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/spoons/cambridge_jubilee_stainless_plastic_teaspoon.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
