@@ -206,7 +206,7 @@ if __name__ == "__main__":
         help="Path to the dataset pickle file to extract the dataset from.",
     )
     parser.add_argument(
-        "--filter",
+        "--not_filter",
         action="store_true",
         help="Filter out failure cases.",
     )
@@ -214,4 +214,4 @@ if __name__ == "__main__":
         "--verbose", action="store_true", help="Print more information."
     )
     args = parser.parse_args()
-    main(args.dataset_pickle_path, args.filter, args.verbose)
+    main(args.dataset_pickle_path, not args.not_filter, args.verbose)
