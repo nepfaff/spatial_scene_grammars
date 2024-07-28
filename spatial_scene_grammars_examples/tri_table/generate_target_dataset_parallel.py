@@ -103,9 +103,14 @@ def sample_realistic_scene(
 def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30):
     counter = 0
     while counter < max_tries:
-        tree, _ = sample_realistic_scene(grammar, constraints)
-        if tree is not None:
-            return tree
+        try:
+            tree, _ = sample_realistic_scene(grammar, constraints)
+            if tree is not None:
+                return tree
+        except:
+            print("Exception during sampling!")
+            pass
+
         counter += 1
 
     print("Failed to find tree within budget!")
@@ -120,15 +125,15 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_save_file = "tri_table_scenes_10k_batch2.pkl"
-    N = 10000
+    dataset_save_file = "tri_table_scenes_50k_batch2.pkl"
+    N = 50000
     processes = 27
 
     # Don't change this to prevent memory issues.
     num_chunks = N // 100
 
     # Check if file already exists
-    assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
+    # assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
 
     start = time.time()
 
