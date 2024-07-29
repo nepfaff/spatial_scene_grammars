@@ -2,7 +2,7 @@ import logging
 
 logging.disable(level=logging.ERROR)
 logger = logging.getLogger("root").setLevel(logging.ERROR)
-
+import argparse
 import os
 import pickle
 import time
@@ -125,9 +125,14 @@ def save_tree(tree, dataset_save_file):
 
 
 def main():
-    dataset_save_file = "tri_table_scenes_50k_batch2.pkl"
-    N = 50000
-    processes = 27
+    parser = argparse.ArgumentParser()
+    parser.add_argument("dataset_save_file", type=str)
+    parser.add_argument("--points", type=int)
+    parser.add_argument("--workers", type=int)
+    args = parser.parse_args()
+    dataset_save_file = args.dataset_save_file
+    N = args.points
+    processes = args.workers
 
     # Don't change this to prevent memory issues.
     num_chunks = N // 100
