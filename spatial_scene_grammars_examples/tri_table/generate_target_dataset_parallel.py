@@ -107,8 +107,9 @@ def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30)
             tree, _ = sample_realistic_scene(grammar, constraints)
             if tree is not None:
                 return tree
-        except:
+        except BaseException as e:
             print("Exception during sampling!")
+            print(e)
             pass
 
         counter += 1
