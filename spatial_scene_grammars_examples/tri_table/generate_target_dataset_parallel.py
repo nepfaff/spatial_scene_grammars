@@ -7,7 +7,7 @@ import os
 import pickle
 import time
 from multiprocessing import Pool
-
+import multiprocessing
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -27,6 +27,12 @@ from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
 from spatial_scene_grammars_examples.tri_table.grammar import *
 
+import os
+
+# Prevent numpy, torch multiprocessing to interfer with the outer multiprocessing loop.
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+torch.set_num_threads(1)
 
 def sample_realistic_scene(
     grammar, constraints, seed=None, skip_physics_constraints=False
@@ -108,8 +114,7 @@ def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30)
             if tree is not None:
                 return tree
         except BaseException as e:
-            print("Exception during sampling!")
-            print(e)
+            print("Exception during sampling!", e)
             pass
 
         counter += 1
@@ -129,11 +134,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset_save_file", type=str)
     parser.add_argument("--points", type=int)
-    parser.add_argument("--workers", type=int)
+    parser.add_argument("--workers", type=int, default=multiprocessing.cpu_count())
     args = parser.parse_args()
-    dataset_save_file = args.dataset_save_file
-    N = args.points
-    processes = args.workers
+    dataset_save_file: str = args.dataset_save_file
+    assert dataset_save_file.endswith(".pkl")
+    N: int = args.points
+    processes: int = min(args.workers, multiprocessing.cpu_count())
 
     # Don't change this to prevent memory issues.
     num_chunks = N // 100
