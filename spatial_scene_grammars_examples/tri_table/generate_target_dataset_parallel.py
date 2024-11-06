@@ -34,6 +34,10 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 torch.set_num_threads(1)
 
+# This slows things down but prevents memory issues.
+# import torch
+# torch.multiprocessing.set_sharing_strategy('file_system')
+
 def sample_realistic_scene(
     grammar, constraints, seed=None, skip_physics_constraints=False
 ):
@@ -141,8 +145,8 @@ def main():
     N: int = args.points
     processes: int = min(args.workers, multiprocessing.cpu_count())
 
-    # Don't change this to prevent memory issues.
-    num_chunks = N // 100
+    # Ensure regular saving.
+    num_chunks = N // 1000
 
     # Check if file already exists
     # assert not os.path.exists(dataset_save_file), "Dataset file already exists!"

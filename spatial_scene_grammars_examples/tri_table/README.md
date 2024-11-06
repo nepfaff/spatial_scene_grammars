@@ -23,3 +23,15 @@ where `-P 12` is the number of parallel processes to run.
 ```bash
 python combine_extracted_datasets.py path/to/folder output_path.pkl
 ```
+
+## Shared memory issues during sampling
+
+If you get the following error, then you ran out of shared memory.
+```
+RuntimeError: unable to mmap 104 bytes from file </torch_48335_894824247_52>: Cannot allocate memory (12)
+```
+
+Increase the max map count:
+```
+sudo sysctl -w vm.max_map_count=262144
+```
