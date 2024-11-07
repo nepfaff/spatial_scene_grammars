@@ -40,6 +40,9 @@ import spatial_scene_grammars_examples
 
 import os
 
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
 # Prevent numpy, torch multiprocessing to interfer with the outer multiprocessing loop.
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
