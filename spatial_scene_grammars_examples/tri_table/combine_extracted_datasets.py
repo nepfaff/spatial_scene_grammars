@@ -6,6 +6,16 @@ import os
 import argparse
 import pickle
 
+def load_trees(dataset_save_file):
+    list_of_trees = []
+    with open(dataset_save_file, "rb") as f:
+        while True:
+            try:
+                tree_list = pickle.load(f)
+                list_of_trees.append(tree_list)
+            except EOFError:
+                break  # End of file reached
+    return list_of_trees
 
 def main():
     parser = argparse.ArgumentParser()
@@ -29,12 +39,18 @@ def main():
     datasets = []
     for file in os.listdir(path):
         if file.endswith(".pkl") or file.endswith(".pickle"):
-            with open(os.path.join(path, file), "rb") as f:
+            dataset_path = os.path.join(path, file)
+            with open(dataset_path, "rb") as f:
                 dataset = pickle.load(f)
             # Check that format is correct.
+            if not all(
+                isinstance(data, list) for data in dataset
+            ):
+                dataset = load_trees(dataset_path)
             assert all(
                 isinstance(data, list) for data in dataset
-            ), "Expected list of lists."
+            ), "Wrong dataset format!"
+             
             scene_sample = dataset[0]
             obj_sample = scene_sample[0]
             assert (

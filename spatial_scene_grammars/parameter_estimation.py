@@ -14,10 +14,7 @@ from functools import partial
 import logging
 import multiprocessing as mp
 
-try:
-    mp.set_start_method('spawn')
-except RuntimeError as e:
-    logging.warn(e)
+
 
 import torch
 torch.set_default_dtype(torch.double)

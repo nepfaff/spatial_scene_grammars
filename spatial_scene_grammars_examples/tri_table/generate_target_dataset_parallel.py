@@ -7,7 +7,7 @@ import os
 import pickle
 import time
 from multiprocessing import Pool
-import multiprocessing
+import multiprocessing as mp
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -26,6 +26,17 @@ from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
 from spatial_scene_grammars_examples.tri_table.grammar import *
+import argparse
+import pickle
+from typing import List
+
+import numpy as np
+from tqdm import tqdm
+
+from spatial_scene_grammars.drake_interop import PhysicsGeometryInfo
+from spatial_scene_grammars.nodes import Node
+from scipy.spatial.transform import Rotation as rot
+import spatial_scene_grammars_examples
 
 import os
 
@@ -34,9 +45,122 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 torch.set_num_threads(1)
 
-# This slows things down but prevents memory issues.
-# import torch
-# torch.multiprocessing.set_sharing_strategy('file_system')
+def extract_tree(tree: SceneTree, filter: bool)-> List[dict] | None:
+    """
+    Function for extracting a dataset to make it independent of the
+    `spatial_scene_grammars` library.
+    The dataset is saved in dictionary form, where each object is represented by a
+    dictionary with the following keys:
+    - "transform": The 4x4 transformation matrix of the object.
+    - "model_path": The path to the object's model.
+
+
+    Optionally also filtes the dataset for failure cases:
+
+    Considered failure cases are:
+    - Shared objects with non-zero rotations about the roll and pitch axes
+    - Shared objects with too high z-translation
+
+    Only the affected object is removed. The scene is removed if removing the object
+    leads to fewer than 3 objects remaining.
+
+    Shared objects are:
+    - SharedPlate
+    - SharedBowl
+    - CerealBox
+    - Jug
+    """
+    observed_nodes: List[Node] = tree.get_observed_nodes()
+
+    filtered_observed_nodes = None
+    if filter:
+        filtered_nodes = []
+        for node in observed_nodes:
+            translation = node.translation
+            euler = rot.from_matrix(node.rotation).as_euler("xyz")
+
+            # Not sure why need full path here for this to work.
+            if (
+                isinstance(
+                    node,
+                    spatial_scene_grammars_examples.tri_table.grammar.SharedPlate,
+                )
+                or isinstance(
+                    node,
+                    spatial_scene_grammars_examples.tri_table.grammar.SharedBowl,
+                )
+                or isinstance(
+                    node,
+                    spatial_scene_grammars_examples.tri_table.grammar.CerealBox,
+                )
+            ):
+                # Should have close to zero translation.
+                if not np.allclose(translation[2], 0.0, atol=3e-3, rtol=0.0):
+                    continue
+
+                # Should have close to zero roll and pitch.
+                if not np.allclose(
+                    euler[0], 0.0, atol=1e-2, rtol=0.0
+                ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                    continue
+
+            if isinstance(
+                node, spatial_scene_grammars_examples.tri_table.grammar.Jug
+            ):
+                # Should have close to 0.091m translation in z (frame at center).
+                if not np.allclose(translation[2], 0.091, atol=3e-3, rtol=0.0):
+                    continue
+
+                # Should have close to zero roll and pitch.
+                if not np.allclose(
+                    euler[0], 0.0, atol=1e-2, rtol=0.0
+                ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                    continue
+
+            filtered_nodes.append(node)
+
+        # Keep all scenes with more than 3 objects.
+        if len(filtered_nodes) >= 3:
+            filtered_observed_nodes = filtered_nodes
+        else:
+            return None
+    else:
+        filtered_observed_nodes = observed_nodes
+
+    data: List[dict] = []
+    for node in filtered_observed_nodes:
+        translation = node.translation
+        rotation = node.rotation
+        geometry_info: PhysicsGeometryInfo = node.physics_geometry_info
+
+        # We expect all geometries to be specified with model paths.
+        assert len(geometry_info.model_paths) == 1
+        assert not geometry_info.visual_geometry
+        assert not geometry_info.collision_geometry
+
+        transform, model_path, _, q0_dict = geometry_info.model_paths[0]
+
+        # `transform` is the transform from the object frame to the geometry frame.
+        transform = transform.numpy()
+        assert np.allclose(
+            transform[:3, :3], np.eye(3)
+        ), f"Expected identity rotation, got\n{transform[:3,:3]}"
+
+        # We expect no joints and thus no joint angles.
+        assert not q0_dict
+
+        combined_transform = np.eye(4)
+        combined_transform[:3, 3] = translation + transform[:3, 3]
+        combined_transform[:3, :3] = rotation
+        data.append(
+            {
+                "transform": combined_transform,
+                "model_path": model_path,
+            }
+        )
+
+    return data
+
 
 def sample_realistic_scene(
     grammar, constraints, seed=None, skip_physics_constraints=False
@@ -110,12 +234,14 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def sample_and_save(grammar, constraints, discard_arg=None, max_tries: int = 30):
+def sample_and_save(grammar, constraints, extract, discard_arg=None, max_tries: int = 30):
     counter = 0
     while counter < max_tries:
         try:
             tree, _ = sample_realistic_scene(grammar, constraints)
             if tree is not None:
+                if extract:
+                    return extract_tree(tree, filter=True)
                 return tree
         except BaseException as e:
             print("Exception during sampling!", e)
@@ -138,12 +264,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset_save_file", type=str)
     parser.add_argument("--points", type=int)
-    parser.add_argument("--workers", type=int, default=multiprocessing.cpu_count())
+    parser.add_argument("--workers", type=int, default=mp.cpu_count())
+    parser.add_argument("--extract", type=bool, default=True)
     args = parser.parse_args()
     dataset_save_file: str = args.dataset_save_file
     assert dataset_save_file.endswith(".pkl")
+    extract: bool = args.extract
     N: int = args.points
-    processes: int = min(args.workers, multiprocessing.cpu_count())
+    processes: int = min(args.workers, mp.cpu_count())
+    
+    # Generate different scenes every time.
+    seed = int(time.time())
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
     # Ensure regular saving.
     num_chunks = N // 1000
@@ -168,13 +301,13 @@ def main():
     # Try to collect a target number of examples, and save them out
     if processes == 1:
         for _ in tqdm(range(N), desc="Generating dataset"):
-            tree = sample_and_save(grammar, constraints)
+            tree = sample_and_save(grammar, constraints, extract)
             save_tree(tree, dataset_save_file)
     else:
         chunks = np.split(np.array(list(range(N))), num_chunks)
         for chunk in tqdm(chunks, desc="Generating dataset", position=0):
             with Pool(processes=processes) as pool:
-                trees = pool.map(partial(sample_and_save, grammar, constraints), chunk)
+                trees = pool.map(partial(sample_and_save, grammar, constraints, extract), chunk)
 
                 # Remove None trees.
                 trees = [tree for tree in trees if tree is not None]
