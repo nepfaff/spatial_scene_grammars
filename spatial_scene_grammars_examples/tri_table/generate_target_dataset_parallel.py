@@ -77,6 +77,9 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     Only the affected object is removed. The scene is removed if removing the object
     leads to fewer than 3 objects remaining.
 
+    Note that the entire scene is removed if a main plate/ bowl does't have close to
+    zero translation and roll/pitch.
+
     Shared objects are:
     - SharedPlate
     - SharedBowl
@@ -94,21 +97,34 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
             # Extract the local z-axis of the object's rotation matrix.
             local_z_axis = node.rotation @ np.array([0, 0, 1])
 
+            main_objects = (
+                spatial_scene_grammars_examples.tri_table.grammar.MainPlate,
+                spatial_scene_grammars_examples.tri_table.grammar.MainBowl,
+                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.MainPlate,
+                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.MainBowl,
+            )
+            if isinstance(node, main_objects):
+                # Ideally we remove the entire plate setting but we just drop the scene
+                # for simplicity.
+
+                # Should have close to zero translation.
+                if not np.allclose(translation[2], 0.0, atol=3e-3, rtol=0.0):
+                    return None
+
+                # Should have close to zero roll and pitch.
+                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
+                    return None
+
             # Not sure why need full path here for this to work.
-            if (
-                isinstance(
-                    node,
-                    spatial_scene_grammars_examples.tri_table.grammar.SharedPlate,
-                )
-                or isinstance(
-                    node,
-                    spatial_scene_grammars_examples.tri_table.grammar.SharedBowl,
-                )
-                or isinstance(
-                    node,
-                    spatial_scene_grammars_examples.tri_table.grammar.CerealBox,
-                )
-            ):
+            shared_objects = (
+                spatial_scene_grammars_examples.tri_table.grammar.SharedPlate,
+                spatial_scene_grammars_examples.tri_table.grammar.SharedBowl,
+                spatial_scene_grammars_examples.tri_table.grammar.CerealBox,
+                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.SharedPlate,
+                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.SharedBowl,
+                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.CerealBox,
+            )
+            if isinstance(node, shared_objects):
                 # Should have close to zero translation.
                 if not np.allclose(translation[2], 0.0, atol=3e-3, rtol=0.0):
                     continue
@@ -117,7 +133,11 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
                 if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                     continue
 
-            if isinstance(node, spatial_scene_grammars_examples.tri_table.grammar.Jug):
+            jugs = (
+                spatial_scene_grammars_examples.tri_table.grammar.Jug,
+                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.Jug,
+            )
+            if isinstance(node, jugs):
                 # Should have close to 0.091m translation in z (frame at center).
                 if not np.allclose(translation[2], 0.091, atol=3e-3, rtol=0.0):
                     continue

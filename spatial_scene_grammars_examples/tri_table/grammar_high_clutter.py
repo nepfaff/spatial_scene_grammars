@@ -149,7 +149,7 @@ class PlateSetting(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.7, 0.2, 0.1]),
+            rule_probs=torch.tensor([0.6, 0.2, 0.2]),
             physics_geometry_info=None,
             observed=False,
         )
