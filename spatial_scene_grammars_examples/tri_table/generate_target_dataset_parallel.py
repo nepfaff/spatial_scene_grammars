@@ -90,7 +90,9 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
         filtered_nodes = []
         for node in observed_nodes:
             translation = node.translation
-            euler = rot.from_matrix(node.rotation).as_euler("xyz")
+
+            # Extract the local z-axis of the object's rotation matrix.
+            local_z_axis = node.rotation @ np.array([0, 0, 1])
 
             # Not sure why need full path here for this to work.
             if (
@@ -112,9 +114,7 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
                     continue
 
                 # Should have close to zero roll and pitch.
-                if not np.allclose(
-                    euler[0], 0.0, atol=1e-2, rtol=0.0
-                ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                     continue
 
             if isinstance(node, spatial_scene_grammars_examples.tri_table.grammar.Jug):
@@ -123,9 +123,7 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
                     continue
 
                 # Should have close to zero roll and pitch.
-                if not np.allclose(
-                    euler[0], 0.0, atol=1e-2, rtol=0.0
-                ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                     continue
 
             filtered_nodes.append(node)
@@ -248,6 +246,12 @@ def sample_realistic_scene(
 def sample_and_save(
     grammar, constraints, extract, discard_arg=None, max_tries: int = 30
 ):
+    # Set a unique seed for each process to prevent each process producing the same
+    # scene.
+    seed = (int(time.time() * 1000) + os.getpid()) % (2**32)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
     counter = 0
     while counter < max_tries:
         try:
@@ -287,11 +291,6 @@ def main():
     high_clutter: bool = args.high_clutter
     N: int = args.points
     processes: int = min(args.workers, mp.cpu_count())
-
-    # Generate different scenes every time.
-    seed = int(time.time())
-    np.random.seed(seed)
-    torch.manual_seed(seed)
 
     # Ensure regular saving.
     num_chunks = N // 1000

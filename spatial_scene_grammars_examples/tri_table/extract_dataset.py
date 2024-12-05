@@ -71,7 +71,9 @@ def main(dataset_pickle_path: str, filter: bool, verbose: bool):
             filtered_nodes = []
             for node in nodes:
                 translation = node.translation
-                euler = rot.from_matrix(node.rotation).as_euler("xyz")
+
+                # Extract the local z-axis of the object's rotation matrix.
+                local_z_axis = node.rotation @ np.array([0, 0, 1])
 
                 # Not sure why need full path here for this to work.
                 if (
@@ -99,13 +101,11 @@ def main(dataset_pickle_path: str, filter: bool, verbose: bool):
                         continue
 
                     # Should have close to zero roll and pitch.
-                    if not np.allclose(
-                        euler[0], 0.0, atol=1e-2, rtol=0.0
-                    ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                    if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                         if verbose:
                             print(
                                 "Warning: Expected zero roll and pitch for scene "
-                                f"{i}, {node}, got {euler[:2]}."
+                                f"{i}, {node}, got z-axis = {local_z_axis}."
                             )
                         num_objs_removed += 1
                         continue
@@ -124,13 +124,11 @@ def main(dataset_pickle_path: str, filter: bool, verbose: bool):
                         continue
 
                     # Should have close to zero roll and pitch.
-                    if not np.allclose(
-                        euler[0], 0.0, atol=1e-2, rtol=0.0
-                    ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
+                    if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                         if verbose:
                             print(
                                 "Warning: Expected zero roll and pitch for scene "
-                                f"{i}, {node}, got {euler[:2]}."
+                                f"{i}, {node}, got z-axis = {local_z_axis}."
                             )
                         num_objs_removed += 1
                         continue
