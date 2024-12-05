@@ -5,6 +5,9 @@
 python generate_target_dataset_parallel.py
 ```
 
+**NOTE:** Need to use `combine_extracted_datasets.py` even if have only one file with
+`--extract=True` (default option).
+
 2. Extract and filter the dataset:
 ```bash
 python extract_dataset.py tri_table_scenes_50k_batch1.pkl
