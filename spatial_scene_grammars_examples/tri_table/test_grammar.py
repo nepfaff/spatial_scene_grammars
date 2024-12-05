@@ -6,13 +6,10 @@ from typing import List
 
 import numpy as np
 import torch
-from tqdm import tqdm
 
 torch.set_default_dtype(torch.double)
-from datetime import timedelta
-from functools import partial
 
-from pydrake.all import PackageMap, StartMeshcat
+from pydrake.all import StartMeshcat
 
 from spatial_scene_grammars.constraints import *
 from spatial_scene_grammars.dataset import *
@@ -23,7 +20,17 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.tri_table.grammar import *
+from spatial_scene_grammars_examples.tri_table.grammar import (
+    Table,
+    ObjectsOnTableConstraint,
+    MinNumObjectsConstraint,
+    SharedObjectsNotInCollisionWithPlateSettingsConstraint,
+)
+from spatial_scene_grammars_examples.tri_table.grammar_high_clutter import (
+    Table as HighClutterTable,
+)
+
+USE_HIGH_CLUTTER = True
 
 
 def sample_realistic_scene(
@@ -37,11 +44,12 @@ def sample_realistic_scene(
             grammar, structure_constraints, 1000, detach=True, verbose=-1
         )
         if not success:
-            # logging.error("Couldn't rejection sample a feasible tree config.")
+            logging.error("Couldn't rejection sample a feasible tree config.")
             return None, None
     else:
         tree = grammar.sample_tree(detach=True)
 
+    print("HMC sampling with constraints.")
     samples = do_fixed_structure_hmc_with_constraint_penalties(
         grammar,
         tree,
@@ -92,6 +100,7 @@ def sample_realistic_scene(
     if skip_physics_constraints:
         return None, good_tree
 
+    print("Projecting tree to feasibility.")
     feasible_tree = project_tree_to_feasibility(
         deepcopy(good_tree), do_forward_sim=True, timestep=0.001, T=1.5
     )
@@ -102,13 +111,18 @@ def sample_realistic_scene(
 meshcat_instance = StartMeshcat()
 
 grammar = SpatialSceneGrammar(
-    root_node_type=Table,
+    root_node_type=HighClutterTable if USE_HIGH_CLUTTER else Table,
     root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
 )
 constraints = [
     ObjectsOnTableConstraint(),
-    MinNumObjectsConstraint(3),
-    SharedObjectsNotInCollisionWithPlateSettingsConstraint(),
+    MinNumObjectsConstraint(
+        min_num_objects=3,
+        table_node_type=HighClutterTable if USE_HIGH_CLUTTER else Table,
+    ),
+    SharedObjectsNotInCollisionWithPlateSettingsConstraint(
+        table_node_type=HighClutterTable if USE_HIGH_CLUTTER else Table
+    ),
 ]
 
 tree, _ = sample_realistic_scene(grammar, constraints)

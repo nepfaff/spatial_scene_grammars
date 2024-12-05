@@ -25,7 +25,15 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.tri_table.grammar import *
+from spatial_scene_grammars_examples.tri_table.grammar import (
+    Table,
+    ObjectsOnTableConstraint,
+    MinNumObjectsConstraint,
+    SharedObjectsNotInCollisionWithPlateSettingsConstraint,
+)
+from spatial_scene_grammars_examples.tri_table.grammar_high_clutter import (
+    Table as HighClutterTable,
+)
 import argparse
 import pickle
 from typing import List
@@ -41,6 +49,7 @@ import spatial_scene_grammars_examples
 import os
 
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 # Prevent numpy, torch multiprocessing to interfer with the outer multiprocessing loop.
@@ -48,7 +57,8 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 torch.set_num_threads(1)
 
-def extract_tree(tree: SceneTree, filter: bool)-> List[dict] | None:
+
+def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     """
     Function for extracting a dataset to make it independent of the
     `spatial_scene_grammars` library.
@@ -107,9 +117,7 @@ def extract_tree(tree: SceneTree, filter: bool)-> List[dict] | None:
                 ) or not np.allclose(euler[1], 0.0, atol=1e-2, rtol=0.0):
                     continue
 
-            if isinstance(
-                node, spatial_scene_grammars_examples.tri_table.grammar.Jug
-            ):
+            if isinstance(node, spatial_scene_grammars_examples.tri_table.grammar.Jug):
                 # Should have close to 0.091m translation in z (frame at center).
                 if not np.allclose(translation[2], 0.091, atol=3e-3, rtol=0.0):
                     continue
@@ -237,7 +245,9 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def sample_and_save(grammar, constraints, extract, discard_arg=None, max_tries: int = 30):
+def sample_and_save(
+    grammar, constraints, extract, discard_arg=None, max_tries: int = 30
+):
     counter = 0
     while counter < max_tries:
         try:
@@ -269,13 +279,15 @@ def main():
     parser.add_argument("--points", type=int)
     parser.add_argument("--workers", type=int, default=mp.cpu_count())
     parser.add_argument("--extract", type=bool, default=True)
+    parser.add_argument("--high_clutter", type=bool, default=False)
     args = parser.parse_args()
     dataset_save_file: str = args.dataset_save_file
     assert dataset_save_file.endswith(".pkl")
     extract: bool = args.extract
+    high_clutter: bool = args.high_clutter
     N: int = args.points
     processes: int = min(args.workers, mp.cpu_count())
-    
+
     # Generate different scenes every time.
     seed = int(time.time())
     np.random.seed(seed)
@@ -291,13 +303,18 @@ def main():
 
     # Set up grammar and constraint set.
     grammar = SpatialSceneGrammar(
-        root_node_type=Table,
+        root_node_type=HighClutterTable if high_clutter else Table,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraints = [
         ObjectsOnTableConstraint(),
-        MinNumObjectsConstraint(3),
-        SharedObjectsNotInCollisionWithPlateSettingsConstraint(),
+        MinNumObjectsConstraint(
+            min_num_objects=3,
+            table_node_type=HighClutterTable if high_clutter else Table,
+        ),
+        SharedObjectsNotInCollisionWithPlateSettingsConstraint(
+            table_node_type=HighClutterTable if high_clutter else Table
+        ),
     ]
 
     # Produce dataset by sampling a bunch of environments.
@@ -310,7 +327,9 @@ def main():
         chunks = np.split(np.array(list(range(N))), num_chunks)
         for chunk in tqdm(chunks, desc="Generating dataset", position=0):
             with Pool(processes=processes) as pool:
-                trees = pool.map(partial(sample_and_save, grammar, constraints, extract), chunk)
+                trees = pool.map(
+                    partial(sample_and_save, grammar, constraints, extract), chunk
+                )
 
                 # Remove None trees.
                 trees = [tree for tree in trees if tree is not None]

@@ -8,9 +8,11 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.scene_grammar import *
 
 """ 
-Table (no geometry, static directive added after) -> plate_settings & (plate | null)*2 &
-        (bowl | null)*2 & (cereal_box | null)*3 & (jug | null)*2
-plate_settings -> plate_setting & plate_setting
+A higher clutter version of grammar.py.
+
+Table (no geometry, static directive added after) -> plate_settings**3 & (plate | null)*4 &
+        (bowl | null)*6 & (cereal_box | null)*4 & (jug | null)*2
+plate_settings -> (plate_setting & plate_setting
 plate_setting -> main_plate | main_bowl | null
 
 main_plate -> plate & ontop_plate & left_of_plate & right_of_plate & top_of_plate & top_right_of_plate
@@ -66,8 +68,25 @@ class Table(AndNode):
         return [
             ProductionRule(
                 child_type=PlateSettings,
-                xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.zeros(3), variance=torch.tensor([1e-16, 0.2**2, 1e-16])
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor([0.0, -0.52, 0.0]),
+                    ub=torch.tensor([1e-3, -0.3, 1e-3]),
+                ),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=PlateSettings,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor([0.0, -0.08, 0.0]),
+                    ub=torch.tensor([1e-3, 0.08, 1e-3]),
+                ),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=PlateSettings,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor([0.0, 0.3, 0.0]),
+                    ub=torch.tensor([1e-3, 0.52, 1e-3]),
                 ),
                 rotation_rule=SameRotationRule(),
             ),
@@ -107,7 +126,7 @@ class PlateSettings(AndNode):
                 child_type=PlateSetting,
                 xyz_rule=ParentFrameGaussianOffsetRule(  # TODO: Replace with uniform?
                     mean=torch.tensor([-cls.DISTANCE_FROM_CENTER, 0.0, 0.0]),
-                    variance=torch.tensor([0.02**2, 0.02**2, 1e-16]),
+                    variance=torch.tensor([0.02**2, 1e-16, 1e-16]),
                 ),
                 rotation_rule=SameRotationRule(
                     offset=torch.from_numpy(
@@ -119,7 +138,7 @@ class PlateSettings(AndNode):
                 child_type=PlateSetting,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([cls.DISTANCE_FROM_CENTER, 0.0, 0.0]),
-                    variance=torch.tensor([0.02**2, 0.02**2, 1e-16]),
+                    variance=torch.tensor([0.02**2, 1e-16, 1e-16]),
                 ),
                 rotation_rule=SameRotationRule(),
             ),
@@ -559,7 +578,7 @@ class SharedPlates(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.7, max_children=2, start_at_one=False
+                p=0.7, max_children=4, start_at_one=False
             ),  # No plate with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
@@ -585,7 +604,7 @@ class SharedBowls(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.7, max_children=2, start_at_one=False
+                p=0.7, max_children=6, start_at_one=False
             ),  # No bowl with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
@@ -611,7 +630,7 @@ class SharedCerealBoxes(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.3, max_children=3, start_at_one=False
+                p=0.4, max_children=3, start_at_one=False
             ),  # No cereal box with probability of ~0.3
             physics_geometry_info=None,
             observed=False,
@@ -763,7 +782,7 @@ class Toast(OrNode):
         )
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.2, 0.8]),
+            rule_probs=torch.tensor([0.25, 0.75]),
             physics_geometry_info=geom,
             observed=True,
         )
@@ -907,134 +926,3 @@ class Jug(TerminalNode):
 class Null(TerminalNode):
     def __init__(self, tf):
         super().__init__(tf=tf, physics_geometry_info=None, observed=False)
-
-
-class ObjectsOnTableConstraint(StructureConstraint):
-    def __init__(self):
-        lb = torch.tensor([-Table.WIDTH / 2.0 + 0.1, -Table.HEIGHT / 2.0 + 0.1, -0.02])
-        ub = torch.tensor([Table.WIDTH / 2.0 - 0.1, Table.HEIGHT / 2.0 - 0.1, 1.0])
-        super().__init__(lower_bound=lb, upper_bound=ub)
-
-    def eval(self, scene_tree):
-        tables = scene_tree.find_nodes_by_type(Table)
-        xyzs = []  # in parent table frame
-        for table in tables:
-            # Collect table children xyz poses in table frame
-            objs = scene_tree.get_children_recursive(table)
-            for obj in objs:
-                offset = torch.matmul(
-                    table.rotation.T, obj.translation - table.translation
-                )
-                xyzs.append(offset)
-        if len(xyzs) > 0:
-            return torch.stack(xyzs, axis=0)
-        else:
-            return torch.empty(size=(0, 3))
-
-    def add_to_ik_prog(
-        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
-    ):
-        raise NotImplementedError()
-
-
-class MinNumObjectsConstraint(StructureConstraint):
-    def __init__(self, min_num_objects, table_node_type):
-        super().__init__(
-            lower_bound=torch.tensor([min_num_objects]),
-            upper_bound=torch.tensor([torch.inf]),
-        )
-        self.table_node_type = table_node_type
-
-    def eval(self, scene_tree):
-        tables = scene_tree.find_nodes_by_type(self.table_node_type)
-        num_objects = 0
-        for table in tables:
-            # Collect table children xyz poses in table frame
-            objs = scene_tree.get_children_recursive(table)
-            observed_objs = [obj for obj in objs if obj.observed]
-            num_objects += len(observed_objs)
-        return torch.tensor([num_objects])
-
-    def add_to_ik_prog(
-        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
-    ):
-        raise NotImplementedError()
-
-
-class SharedObjectsNotInCollisionWithPlateSettingsConstraint(StructureConstraint):
-    def __init__(self, table_node_type):
-        super().__init__(
-            lower_bound=torch.tensor([0.0]), upper_bound=torch.tensor([torch.inf])
-        )
-        self.table_node_type = table_node_type
-
-    def eval(self, scene_tree):
-        tables = scene_tree.find_nodes_by_type(self.table_node_type)
-        for table in tables:
-            # Get shared objects.
-            shared_plates = scene_tree.get_children_recursive(table, SharedPlates)
-            shared_plate_objects = (
-                np.array([scene_tree.get_children(p) for p in shared_plates])
-                .flatten()
-                .tolist()
-            )
-            shared_bowls = scene_tree.get_children_recursive(table, SharedBowls)
-            shared_bowl_objects = (
-                np.array([scene_tree.get_children(p) for p in shared_bowls])
-                .flatten()
-                .tolist()
-            )
-            shared_cereal_boxes = scene_tree.get_children_recursive(
-                table, SharedCerealBoxes
-            )
-            shared_cereal_box_objects = (
-                np.array([scene_tree.get_children(p) for p in shared_cereal_boxes])
-                .flatten()
-                .tolist()
-            )
-            shared_jugs = scene_tree.get_children_recursive(table, SharedJugs)
-            shared_jug_objects = (
-                np.array([scene_tree.get_children(p) for p in shared_jugs])
-                .flatten()
-                .tolist()
-            )
-            shared_objects = (
-                shared_plate_objects
-                + shared_bowl_objects
-                + shared_cereal_box_objects
-                + shared_jug_objects
-            )
-
-            # Get plate settings and associated objects.
-            plate_settings = scene_tree.get_children_recursive(table, PlateSettings)
-            plate_setting_objects = (
-                np.array([scene_tree.get_children_recursive(p) for p in plate_settings])
-                .flatten()
-                .tolist()
-            )
-            # Remove unoberseved objects.
-            plate_setting_objects = [
-                obj for obj in plate_setting_objects if obj.observed
-            ]
-
-            if len(plate_setting_objects) == 0 or len(shared_objects) == 0:
-                # Constraint trivially satisfied.
-                return torch.tensor([1.0])
-
-            # Extract translations and keep out radii.
-            obj_translations = torch.stack(
-                [obj.translation[:2] for obj in plate_setting_objects]
-            )
-            shared_translations = torch.stack(
-                [shared_obj.translation[:2] for shared_obj in shared_objects]
-            )
-            keep_out_radii = torch.tensor(
-                [shared_obj.KEEP_OUT_RADIUS for shared_obj in shared_objects]
-            )
-
-            # Compute the distance matrix between all pairs of objects and shared
-            # objects.
-            distances = torch.cdist(obj_translations, shared_translations)
-
-            # Negative if any object is within keep out radius of any shared object.
-            return torch.flatten(distances - keep_out_radii).unsqueeze(1)
