@@ -268,7 +268,7 @@ def sample_and_save(
 ):
     # Set a unique seed for each process to prevent each process producing the same
     # scene.
-    seed = (int(time.time() * 1000) + os.getpid()) % (2**32)
+    seed = (int(time.time() * 1000000) + os.getpid()) % (2**32)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -287,6 +287,7 @@ def sample_and_save(
         counter += 1
 
     print("Failed to find tree within budget!")
+    return None
 
 
 def save_tree(tree, dataset_save_file):
