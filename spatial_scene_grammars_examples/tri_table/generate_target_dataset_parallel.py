@@ -15,6 +15,7 @@ from tqdm import tqdm
 torch.set_default_dtype(torch.double)
 from datetime import timedelta
 from functools import partial
+from copy import deepcopy
 
 from spatial_scene_grammars.constraints import *
 from spatial_scene_grammars.dataset import *
@@ -52,7 +53,7 @@ import warnings
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-# Prevent numpy, torch multiprocessing to interfer with the outer multiprocessing loop.
+# Prevent numpy, torch multiprocessing to interfere with the outer multiprocessing loop.
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 torch.set_num_threads(1)
@@ -67,8 +68,7 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     - "transform": The 4x4 transformation matrix of the object.
     - "model_path": The path to the object's model.
 
-
-    Optionally also filtes the dataset for failure cases:
+    Optionally also filters the dataset for failure cases:
 
     Considered failure cases are:
     - Shared objects with non-zero rotations about the roll and pitch axes
@@ -169,13 +169,11 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
 
         transform, model_path, _, q0_dict = geometry_info.model_paths[0]
 
-        # `transform` is the transform from the object frame to the geometry frame.
         transform = transform.numpy()
         assert np.allclose(
             transform[:3, :3], np.eye(3)
         ), f"Expected identity rotation, got\n{transform[:3,:3]}"
 
-        # We expect no joints and thus no joint angles.
         assert not q0_dict
 
         combined_transform = np.eye(4)
@@ -194,6 +192,14 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
 def sample_realistic_scene(
     grammar, constraints, seed=None, skip_physics_constraints=False
 ):
+    """
+    Sample a realistic scene from the given grammar and constraints.
+    Optionally skip physics constraints.
+
+    Attempts to first sample a tree structure that meets structure constraints.
+    Then it samples poses (HMC-based) that meet pose constraints.
+    Finally, it tries to project the solution to feasibility using Drake's physical sim.
+    """
     if seed is not None:
         torch.random.manual_seed(seed)
     structure_constraints, pose_constraints = split_constraints(constraints)
@@ -202,7 +208,6 @@ def sample_realistic_scene(
             grammar, structure_constraints, 1000, detach=True, verbose=-1
         )
         if not success:
-            # logging.error("Couldn't rejection sample a feasible tree config.")
             return None, None
     else:
         tree = grammar.sample_tree(detach=True)
@@ -212,7 +217,7 @@ def sample_realistic_scene(
         tree,
         num_samples=25,
         subsample_step=1,
-        with_nonpenetration=False,  # Too difficult
+        with_nonpenetration=False,
         zmq_url="",
         constraints=pose_constraints,
         kernel_type="NUTS",
@@ -220,17 +225,9 @@ def sample_realistic_scene(
         target_accept_prob=0.8,
         adapt_step_size=True,
         verbose=-1,
-        # kernel_type="HMC", num_steps=1, step_size=1E-1, adapt_step_size=False, # Langevin-ish
-        structure_vis_kwargs={
-            "with_triad": False,
-            "linewidth": 30,
-            "node_sphere_size": 0.02,
-            "alpha": 0.5,
-        },
     )
 
-    # Step through samples backwards in HMC process and pick out a tree that satisfies
-    # the constraints.
+    # Check samples for constraint satisfaction
     good_tree = None
     best_bad_tree = None
     best_violation = None
@@ -246,12 +243,8 @@ def sample_realistic_scene(
                 best_bad_tree = candidate_tree
                 best_violation = total_violation.detach()
 
-    if good_tree == None:
-        # logging.error("No tree in samples satisfied constraints.")
-        # print("Best total violation: %f" % best_violation)
-        # print("Violations of best bad tree:")
-        # for constraint in constraints:
-        #     print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
+    if good_tree is None:
+        # No tree in samples satisfied constraints.
         return None, None
 
     if skip_physics_constraints:
@@ -264,10 +257,15 @@ def sample_realistic_scene(
 
 
 def sample_and_save(
-    grammar, constraints, extract, discard_arg=None, max_tries: int = 30
+    grammar, constraints, extract, max_tries: int = 1
 ):
-    # Set a unique seed for each process to prevent each process producing the same
-    # scene.
+    """
+    Attempt to sample a realistic scene that meets constraints.
+    Returns either the extracted data or the tree.
+
+    If it fails up to max_tries times, returns None.
+    """
+    # Set a unique seed for each process
     seed = (int(time.time() * 1000000) + os.getpid()) % (2**32)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -280,22 +278,11 @@ def sample_and_save(
                 if extract:
                     return extract_tree(tree, filter=True)
                 return tree
-        except BaseException as e:
-            print("Exception during sampling!", e)
-            pass
-
+        except Exception as e:
+            # If something goes wrong, try again until max_tries is reached.
+            print("Exception during sampling in worker:", e)
         counter += 1
-
-    print("Failed to find tree within budget!")
     return None
-
-
-def save_tree(tree, dataset_save_file):
-    if tree is None:
-        # print("Tree is None, skipping save.")
-        return
-    with open(dataset_save_file, "a+b") as f:
-        pickle.dump(tree, f)
 
 
 def main():
@@ -313,15 +300,8 @@ def main():
     N: int = args.points
     processes: int = min(args.workers, mp.cpu_count())
 
-    # Ensure regular saving.
-    num_chunks = N // 1000
-
-    # Check if file already exists
-    # assert not os.path.exists(dataset_save_file), "Dataset file already exists!"
-
     start = time.time()
 
-    # Set up grammar and constraint set.
     grammar = SpatialSceneGrammar(
         root_node_type=HighClutterTable if high_clutter else Table,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
@@ -337,25 +317,64 @@ def main():
         ),
     ]
 
-    # Produce dataset by sampling a bunch of environments.
-    # Try to collect a target number of examples, and save them out
-    if processes == 1:
-        for _ in tqdm(range(N), desc="Generating dataset"):
-            tree = sample_and_save(grammar, constraints, extract)
-            save_tree(tree, dataset_save_file)
-    else:
-        chunks = np.split(np.array(list(range(N))), num_chunks)
-        for chunk in tqdm(chunks, desc="Generating dataset", position=0):
-            with Pool(processes=processes) as pool:
-                trees = pool.map(
-                    partial(sample_and_save, grammar, constraints, extract), chunk
-                )
+    pool = Pool(processes=processes)
 
-                # Remove None trees.
-                trees = [tree for tree in trees if tree is not None]
-                # print(f"Collected {len(trees)} trees out of {len(chunk)} samples.")
-                for tree in tqdm(trees, desc="  Saving trees", leave=False, position=1):
-                    save_tree(tree, dataset_save_file)
+    chunk_size = 1000
+    num_chunks = N // chunk_size
+    remainder = N % chunk_size
+
+    task_func = sample_and_save
+    task_args = (grammar, constraints, extract)
+    task_timeout = 500
+
+    # Process full chunks, write after each chunk
+    for _ in tqdm(range(num_chunks), desc="Generating dataset"):
+        # Launch all tasks concurrently
+        async_results = [pool.apply_async(task_func, args=task_args) for _ in range(chunk_size)]
+
+        # Collect results
+        tasks = []
+        for async_res in async_results:
+            try:
+                res = async_res.get(timeout=task_timeout)
+                tasks.append(res)
+            except mp.TimeoutError:
+                tasks.append(None)
+            except Exception as e:
+                print("Worker exception:", e)
+                tasks.append(None)
+
+        # Filter None results
+        tasks = [t for t in tasks if t is not None]
+
+        if tasks:
+            with open(dataset_save_file, "ab") as f:
+                for r in tasks:
+                    pickle.dump(r, f)
+
+    # Process remainder, if any
+    if remainder > 0:
+        async_results = [pool.apply_async(task_func, args=task_args) for _ in range(remainder)]
+        rem_tasks = []
+        for async_res in async_results:
+            try:
+                res = async_res.get(timeout=task_timeout)
+                rem_tasks.append(res)
+            except mp.TimeoutError:
+                rem_tasks.append(None)
+            except Exception as e:
+                print("Worker exception:", e)
+                rem_tasks.append(None)
+
+        rem_tasks = [t for t in rem_tasks if t is not None]
+
+        if rem_tasks:
+            with open(dataset_save_file, "ab") as f:
+                for r in rem_tasks:
+                    pickle.dump(r, f)
+
+    pool.close()
+    pool.join()
 
     print(
         f"Generating dataset of {N} samples took {timedelta(seconds=time.time()-start)}"
@@ -363,4 +382,5 @@ def main():
 
 
 if __name__ == "__main__":
+    mp.set_start_method('spawn', force=True)
     main()
