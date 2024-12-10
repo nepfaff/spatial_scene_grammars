@@ -65,6 +65,11 @@ def main(dataset_pickle_path: str, filter: bool, verbose: bool):
     ]
 
     if filter:
+        raise NotImplementedError(
+            "Filtering is outdated. See generate_target_dataset_parallel.py for the new "
+            "filtering."
+        )
+
         filtered_observed_nodes = []
         num_objs_removed = 0
         for i, nodes in enumerate(tqdm(observed_nodes, desc="Filtering scenes")):

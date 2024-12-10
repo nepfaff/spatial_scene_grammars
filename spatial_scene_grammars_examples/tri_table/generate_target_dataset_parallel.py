@@ -115,6 +115,10 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
                 if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                     return None
 
+            # Remove nodes with translation above 5m in any direction.
+            if np.any(np.abs(translation) > 5.0):
+                continue
+
             # Not sure why need full path here for this to work.
             shared_objects = (
                 spatial_scene_grammars_examples.tri_table.grammar.SharedPlate,
@@ -256,9 +260,7 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def sample_and_save(
-    grammar, constraints, extract, max_tries: int = 1
-):
+def sample_and_save(grammar, constraints, extract, max_tries: int = 1):
     """
     Attempt to sample a realistic scene that meets constraints.
     Returns either the extracted data or the tree.
@@ -330,7 +332,9 @@ def main():
     # Process full chunks, write after each chunk
     for _ in tqdm(range(num_chunks), desc="Generating dataset"):
         # Launch all tasks concurrently
-        async_results = [pool.apply_async(task_func, args=task_args) for _ in range(chunk_size)]
+        async_results = [
+            pool.apply_async(task_func, args=task_args) for _ in range(chunk_size)
+        ]
 
         # Collect results
         tasks = []
@@ -354,7 +358,9 @@ def main():
 
     # Process remainder, if any
     if remainder > 0:
-        async_results = [pool.apply_async(task_func, args=task_args) for _ in range(remainder)]
+        async_results = [
+            pool.apply_async(task_func, args=task_args) for _ in range(remainder)
+        ]
         rem_tasks = []
         for async_res in async_results:
             try:
@@ -382,5 +388,5 @@ def main():
 
 
 if __name__ == "__main__":
-    mp.set_start_method('spawn', force=True)
+    mp.set_start_method("spawn", force=True)
     main()
