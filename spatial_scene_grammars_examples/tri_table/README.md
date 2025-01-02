@@ -1,3 +1,15 @@
+## Setup
+
+From the `tri_table` folder, create the model data using the following commands:
+
+```bash
+cp ~/efs/nicholas/scene_gen_data/anzu.zip .
+```
+
+```bash
+unzip anzu.zip
+```
+
 ## Sampling instructions
 
 1. Execute the following script (make sure to adjust `dataset_save_file` in the script):
