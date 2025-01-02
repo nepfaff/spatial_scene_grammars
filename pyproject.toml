@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "spatial_scene_grammars"
+version = "0.1.0"
+description = ""
+authors = ["Nicholas Pfaff <nepfaff@mit.edu>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.11"
+torch = "^2.3.0"
+tqdm = "^4.66.4"
+numpy = "^1.26.4"
+drake = "^1.28.0"
+ipython = "^8.24.0"
+pytorch3d = {url = "https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py310_cu118_pyt201/pytorch3d-0.7.4-cp310-cp310-linux_x86_64.whl"}
+matplotlib = "^3.8.4"
+scipy = "^1.14.1"
+networkx = "^3.4.2"
+codecov = "^2.1.13"
+pyro-ppl = "^1.9.1"
+torch-geometric = "1.7.0"
+meshcat = "^0.3.2"
+torchviz = "^0.0.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
