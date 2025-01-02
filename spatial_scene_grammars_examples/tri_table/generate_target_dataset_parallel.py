@@ -92,10 +92,10 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     if filter:
         filtered_nodes = []
         for node in observed_nodes:
-            translation = node.translation
+            translation = np.array(node.translation)
 
             # Extract the local z-axis of the object's rotation matrix.
-            local_z_axis = node.rotation @ np.array([0, 0, 1])
+            local_z_axis = np.array(node.rotation) @ np.array([0, 0, 1])
 
             main_objects = (
                 spatial_scene_grammars_examples.tri_table.grammar.MainPlate,
