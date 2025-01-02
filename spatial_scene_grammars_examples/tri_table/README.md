@@ -2,7 +2,7 @@
 
 From the top level folder run:
 ```bash
-pip install -e .
+pip install -r requirements.txt && pip install -e .
 ```
 
 From the `tri_table` folder, create the model data using the following commands:
