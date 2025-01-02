@@ -1,5 +1,10 @@
 ## Setup
 
+From the top level folder run:
+```bash
+pip install -e .
+```
+
 From the `tri_table` folder, create the model data using the following commands:
 
 ```bash
