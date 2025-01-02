@@ -1,18 +1,27 @@
 ## Setup
 
-From the top level folder run:
+Setup poetry:
 ```bash
-pip install -r requirements.txt && pip install -e .
+sudo apt update && yes | sudo apt install pipx && pipx ensurepath
+yes | pipx install poetry
+. ~/.bashrc
+poetry config virtualenvs.in-project true
+```
+
+Install repo:
+```bash
+poetry install
+```
+
+Activate env:
+```bash
+. .venv/bin/activate
 ```
 
 From the `tri_table` folder, create the model data using the following commands:
 
 ```bash
-cp ~/efs/nicholas/scene_gen_data/anzu.zip .
-```
-
-```bash
-unzip anzu.zip
+cp ~/efs/nicholas/scene_gen_data/anzu.zip . && yes | unzip anzu.zip
 ```
 
 ## Sampling instructions
