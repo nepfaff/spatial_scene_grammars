@@ -14,6 +14,7 @@ import pydrake.geometry as pydrake_geom
 import torch
 import yaml
 from pydrake.all import (  # ConnectMeshcatVisualizer,
+    AddMultibodyPlant,
     AddMultibodyPlantSceneGraph,
     AngleAxis,
     BasicVector,
@@ -22,12 +23,13 @@ from pydrake.all import (  # ConnectMeshcatVisualizer,
     DiagramBuilder,
     DiscreteContactApproximation,
     ExternallyAppliedSpatialForce,
-    InverseKinematics,MultibodyPlantConfig,AddMultibodyPlant,
+    InverseKinematics,
     LeafSystem,
     MeshcatVisualizer,
     MinimumDistanceUpperBoundConstraint,
     ModelInstanceIndex,
     MultibodyPlant,
+    MultibodyPlantConfig,
     Parser,
     RigidTransform,
     RotationMatrix,
@@ -477,7 +479,7 @@ def split_tree_into_containers(scene_tree):
 
 
 def compile_scene_tree_to_mbp_and_sg(
-    scene_tree, timestep=0.001, return_node_model_ids=False
+    scene_tree, timestep=0.001, return_node_model_ids=False, static_models: str = None
 ):
     builder = DiagramBuilder()
     multibody_plant_config = MultibodyPlantConfig(
@@ -487,14 +489,37 @@ def compile_scene_tree_to_mbp_and_sg(
     mbp, scene_graph = AddMultibodyPlant(multibody_plant_config, builder)
     mbp.set_discrete_contact_approximation(DiscreteContactApproximation.kLagged)
     parser = Parser(mbp)
-    package_file_abs_path = os.path.abspath(os.path.expanduser("anzu/package.xml"))
-    parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
+
+    # Add Anzu package.
+    anzu_package_path = os.path.expanduser("anzu/package.xml")
+    if os.path.exists(anzu_package_path):
+        package_file_abs_path = os.path.abspath(anzu_package_path)
+        parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
+    else:
+        print("Anzu package not found.")
+
+    # Add Gazebo package.
+    gazebo_package_path = os.path.expanduser("gazebo/package.xml")
+    if os.path.exists(gazebo_package_path):
+        package_file_abs_path = os.path.abspath(gazebo_package_path)
+        parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
+    else:
+        print("Gazebo package not found.")
+
     world_body = mbp.world_body()
 
     # Add static models.
-    parser.AddModelsFromUrl(
-        "package://anzu/models/visuomotor/add_riverway_without_arms.dmd.yaml"
-    )
+    if static_models is not None:
+        if static_models.endswith(".dmd.yaml"):
+            parser.AddModelsFromUrl(static_models)
+        elif static_models.endswith(".sdf"):
+            parser.AddModelsFromUrl(static_models)
+            # TODO: Make this more general.
+            mbp.WeldFrames(
+                world_body.body_frame(),
+                mbp.GetBodyByName("shelves_body").body_frame(),
+                RigidTransform(p=[0.0, 0.0, 0.0]),
+            )
 
     node_to_free_body_ids_map = {}
     body_id_to_node_map = {}
@@ -634,12 +659,16 @@ def project_tree_to_feasibility(
     prefix="projection",
     timestep=0.001,
     T=1.0,
+    static_models: str = None,
 ):
     # Mutates tree into tree with bodies in closest
     # nonpenetrating configuration.
     builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids = (
         compile_scene_tree_to_mbp_and_sg(
-            tree, timestep=timestep, return_node_model_ids=True
+            tree,
+            timestep=timestep,
+            return_node_model_ids=True,
+            static_models=static_models,
         )
     )
     mbp.Finalize()

@@ -1,8 +1,5 @@
 import logging
 import os
-import pickle
-import time
-from typing import List
 
 import numpy as np
 import torch
@@ -20,17 +17,10 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.tri_table.grammar import (
+from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
     MinNumObjectsConstraint,
-    ObjectsOnTableConstraint,
-    SharedObjectsNotInCollisionWithPlateSettingsConstraint,
-    Table,
+    Shelf,
 )
-from spatial_scene_grammars_examples.tri_table.grammar_high_clutter import (
-    Table as HighClutterTable,
-)
-
-USE_HIGH_CLUTTER = True
 
 
 def sample_realistic_scene(
@@ -106,8 +96,9 @@ def sample_realistic_scene(
         do_forward_sim=True,
         timestep=0.001,
         T=1.5,
-        static_models="package://drake_models/manipulation_station/table.sdf",
+        static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
+    feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
 
 
@@ -115,18 +106,13 @@ def sample_realistic_scene(
 meshcat_instance = StartMeshcat()
 
 grammar = SpatialSceneGrammar(
-    root_node_type=HighClutterTable if USE_HIGH_CLUTTER else Table,
+    root_node_type=Shelf,
     root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
 )
 constraints = [
-    ObjectsOnTableConstraint(),
-    MinNumObjectsConstraint(
-        min_num_objects=3,
-        table_node_type=HighClutterTable if USE_HIGH_CLUTTER else Table,
-    ),
-    SharedObjectsNotInCollisionWithPlateSettingsConstraint(
-        table_node_type=HighClutterTable if USE_HIGH_CLUTTER else Table
-    ),
+    # ObjectsInShelfConstraint(),
+    # MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
+    # SharedObjectsNotInCollisionWithPlateSettingsConstraint(table_node_type=Shelf),
 ]
 
 tree, _ = sample_realistic_scene(grammar, constraints)
@@ -138,8 +124,8 @@ if tree is None:
 scene = []
 for node in tree.get_observed_nodes():
     node: Node
-    translation = node.translation
-    rotation = node.rotation
+    translation = node.translation.numpy()
+    rotation = node.rotation.numpy()
     geometry_info: PhysicsGeometryInfo = node.physics_geometry_info
 
     # We expect all geometries to be specified with model paths.
@@ -150,6 +136,7 @@ for node in tree.get_observed_nodes():
     transform, model_path, _, q0_dict = geometry_info.model_paths[0]
 
     # `transform` is the transform from the object frame to the geometry frame.
+    # Don't currently support non-identity rotations.
     transform = transform.numpy()
     assert np.allclose(
         transform[:3, :3], np.eye(3)
@@ -181,13 +168,20 @@ builder = DiagramBuilder()
 plant: MultibodyPlant
 plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=0.0)
 parser = Parser(plant)
+parser.SetAutoRenaming(True)
+# Add Anzu package.
 package_file_abs_path = os.path.abspath(os.path.expanduser("anzu/package.xml"))
 parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
-parser.SetAutoRenaming(True)
+# Add Gazebo package.
+package_file_abs_path = os.path.abspath(os.path.expanduser("gazebo/package.xml"))
+parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
 
 # Add static models.
-parser.AddModelsFromUrl(
-    "package://anzu/models/visuomotor/add_riverway_without_arms.dmd.yaml"
+parser.AddModelsFromUrl("package://drake_models/manipulation_station/shelves.sdf")
+plant.WeldFrames(
+    plant.world_frame(),
+    plant.GetBodyByName("shelves_body").body_frame(),
+    RigidTransform(p=[0.0, 0.0, 0.0]),
 )
 
 # Add scene models.
