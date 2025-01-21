@@ -41,6 +41,7 @@ large_board_game (possible multiple options) -> null
 
 # TODO: Use box collision geometries for board games.
 # TODO: Book options from gazebo and manipulation
+# TODO: Max board game stack height (see dumpling grammar)
 
 # TODO: Next is adding more lying board games. Check their size first. Then finish top shelf setting with speaker.
 
@@ -466,7 +467,7 @@ class LargeBoardGame(OrNode):
             tf=tf,
             physics_geometry_info=None,
             observed=False,
-            rule_probs=torch.tensor([0.5, 0.5]),
+            rule_probs=torch.tensor([1 / 3, 1 / 3, 1 / 3]),
         )
 
     @classmethod
@@ -480,6 +481,11 @@ class LargeBoardGame(OrNode):
             ),
             ProductionRule(
                 child_type=LyingMonopolyBoardGame,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=LyingSlidersBoardGame,
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
@@ -531,7 +537,7 @@ class LyingClueBoardGame(OrNode):
 class LyingMonopolyBoardGame(OrNode):
     WIDTH = 0.4  # x-coordinate
     LENGTH = 0.265  # y-coordinate
-    HEIGHT = 0.054  # z-coordinate
+    HEIGHT = 0.055  # z-coordinate
 
     KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
 
@@ -555,6 +561,47 @@ class LyingMonopolyBoardGame(OrNode):
                 child_type=LargeBoardGame,
                 xyz_rule=SamePositionRule(
                     offset=torch.tensor([0.0, 0.0, LyingMonopolyBoardGame.HEIGHT]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(), np.array([1e6, 1e6, 5000])
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class LyingSlidersBoardGame(OrNode):
+    WIDTH = 0.4  # x-coordinate
+    LENGTH = 0.265  # y-coordinate
+    HEIGHT = 0.069  # z-coordinate
+
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/Sorry_Sliders_Board_Game/lying_model.sdf",
+        )
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=geom,
+            observed=True,
+            rule_probs=torch.tensor([0.3, 0.7]),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=LargeBoardGame,
+                xyz_rule=SamePositionRule(
+                    offset=torch.tensor([0.0, 0.0, LyingSlidersBoardGame.HEIGHT]),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
                     RotationMatrix(), np.array([1e6, 1e6, 5000])
