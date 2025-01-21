@@ -44,7 +44,7 @@ large_board_game (possible multiple options) -> null
 # TODO: Book options from gazebo and manipulation
 # TODO: Max board game stack height (see dumpling grammar)
 
-# TODO: Next is adding more lying board games. Check their size first. Then finish top shelf setting with speaker.
+# TODO: Next is finishing shelf_setting.
 
 Model visualizer is very useful:
 ```
@@ -186,6 +186,11 @@ class TopShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=JBLSpeakerOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 
@@ -254,6 +259,11 @@ class ShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=JBLSpeakerOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 
@@ -314,6 +324,65 @@ class BigBowlOrNull(OrNode):
         rules = [
             ProductionRule(
                 child_type=BigBowl,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class JBLSpeaker(TerminalNode):
+    WIDTH = 0.175  # x-coordinate
+    LENGTH = 0.07  # y-coordinate
+
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/JBL_Charge_Speaker_portable_wireless_wired_Green/model.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class JBLSpeakerOrNull(OrNode):
+    SAVE_RADIUS = JBLSpeaker.KEEP_OUT_RADIUS
+    KEEP_OUT_RADIUS = JBLSpeaker.KEEP_OUT_RADIUS
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.1, 0.9]),
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=JBLSpeaker,
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
@@ -586,7 +655,7 @@ class LyingSlidersBoardGame(OrNode):
     LENGTH = 0.265  # y-coordinate
     HEIGHT = 0.069  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
