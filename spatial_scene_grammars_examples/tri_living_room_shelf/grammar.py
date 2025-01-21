@@ -39,7 +39,8 @@ speaker -> null
 book -> null
 large_board_game (possible multiple options) -> null
 
-# TODO: Use box collision geometries for board games.
+# NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
+
 # TODO: Book options from gazebo and manipulation
 # TODO: Max board game stack height (see dumpling grammar)
 
@@ -245,6 +246,11 @@ class ShelfSetting(AndNode):
         return [
             ProductionRule(
                 child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=StackedBoardGamesOrNull,
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
