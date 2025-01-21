@@ -403,7 +403,7 @@ class LargeBoardGame(OrNode):
             tf=tf,
             physics_geometry_info=None,
             observed=False,
-            rule_probs=torch.tensor([1, 0]),
+            rule_probs=torch.tensor([0.5, 0.5]),
         )
 
     @classmethod
@@ -420,10 +420,16 @@ class LargeBoardGame(OrNode):
                     np.array([1e6, 1e6, 100]),
                 ),  # Allow some yaw rotation.
             ),
-            ProductionRule(  # TODO: Replace with other large baord games
-                child_type=Null,
-                xyz_rule=SamePositionRule(),
-                rotation_rule=SameRotationRule(),
+            ProductionRule(
+                child_type=LyingMonopolyBoardGame,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, 0.0]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2.0)),
+                    np.array([1e6, 1e6, 100]),
+                ),  # Allow some yaw rotation.
             ),
         ]
         return rules
@@ -443,6 +449,24 @@ class LyingClueBoardGame(TerminalNode):
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
             "package://gazebo/models/Clue_Board_Game_Classic_Edition/lying_model.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class LyingMonopolyBoardGame(TerminalNode):
+    WIDTH = 0.4  # x-coordinate
+    LENGTH = 0.265  # y-coordinate
+    HEIGHT = 0.054  # z-coordinate
+
+    KEEP_OUT_RADIUS = max(
+        LyingBalderdashBoardGame.WIDTH, LyingBalderdashBoardGame.LENGTH
+    )
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/My_Monopoly_Board_Game/lying_model.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
