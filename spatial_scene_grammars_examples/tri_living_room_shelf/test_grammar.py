@@ -212,4 +212,4 @@ diagram = builder.Build()
 # Simulate.
 simulator = Simulator(diagram)
 simulator.set_target_realtime_rate(1.0)
-simulator.AdvanceTo(5.0)
+simulator.AdvanceTo(20.0)

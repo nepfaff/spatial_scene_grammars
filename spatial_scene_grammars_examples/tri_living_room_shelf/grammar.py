@@ -9,9 +9,12 @@ from spatial_scene_grammars.scene_grammar import *
 
 """ 
 Shelf (no geometry, static directive added after) -> top_shelf_setting_or_large_board_game &
-    shelf_setting (upper) & shelf_setting (lower) & shelf_setting (bottom)
+    shelf_setting_or_large_board_game (upper) &
+    shelf_setting_or_large_board_game (lower) &
+    shelf_setting_or_large_board_game (bottom)
     
 top_shelf_setting_or_large_board_game -> top_shelf_setting | large_board_game | null
+shelf_setting_or_large_board_game -> shelf_setting | large_board_game | null
 
 top_shelf_setting -> (lamp | null) | (big_bowl | null) | (stacked_board_games | null) |
     (speaker | null)
@@ -88,21 +91,21 @@ class Shelf(AndNode):
                 rotation_rule=SameRotationRule(),
             ),
             ProductionRule(
-                child_type=ShelfSetting,
+                child_type=ShelfSettingOrLargeBoardGame,
                 xyz_rule=SamePositionRule(
                     offset=torch.tensor([0, 0, cls.UPPER_OFFSET])
                 ),
                 rotation_rule=SameRotationRule(),
             ),
             ProductionRule(
-                child_type=ShelfSetting,
+                child_type=ShelfSettingOrLargeBoardGame,
                 xyz_rule=SamePositionRule(
                     offset=torch.tensor([0, 0, cls.LOWER_OFFSET])
                 ),
                 rotation_rule=SameRotationRule(),
             ),
             ProductionRule(
-                child_type=ShelfSetting,
+                child_type=ShelfSettingOrLargeBoardGame,
                 xyz_rule=SamePositionRule(
                     offset=torch.tensor([0, 0, cls.BOTTOM_OFFSET])
                 ),
@@ -115,7 +118,7 @@ class TopShelfSettingOrLargeBoardGame(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.8, 0.1, 0.1]),
+            rule_probs=torch.tensor([0.8, 0.05, 0.05, 0.1]),
             observed=False,
             physics_geometry_info=None,
         )
@@ -130,8 +133,25 @@ class TopShelfSettingOrLargeBoardGame(OrNode):
             ),
             ProductionRule(
                 child_type=LargeBoardGame,
-                xyz_rule=SamePositionRule(),
-                rotation_rule=SameRotationRule(),
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, 0.0]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2.0)),
+                    np.array([1e6, 1e6, 100]),
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(  # Same as above but with flipped yaw.
+                child_type=LargeBoardGame,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, 0.0]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, -np.pi / 2.0)),
+                    np.array([1e6, 1e6, 100]),
+                ),  # Allow some yaw rotation.
             ),
             ProductionRule(
                 child_type=Null,
@@ -167,6 +187,53 @@ class TopShelfSetting(AndNode):
         ]
 
 
+class ShelfSettingOrLargeBoardGame(OrNode):
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.7, 0.1, 0.1, 0.1]),
+            observed=False,
+            physics_geometry_info=None,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=ShelfSetting,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=LargeBoardGame,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.01, 0.0, 0.0]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2.0)),
+                    np.array([1e6, 1e6, 1000]),
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(  # Same as above but with flipped yaw.
+                child_type=LargeBoardGame,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.01, 0.0, 0.0]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, -np.pi / 2.0)),
+                    np.array([1e6, 1e6, 1000]),
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+
+
 class ShelfSetting(AndNode):
 
     def __init__(self, tf):
@@ -183,21 +250,23 @@ class ShelfSetting(AndNode):
         ]
 
 
-class LampOrNull(OrNode):
+class LampOrNull(RepeatingSetNode):
     SAVE_RADIUS = 0.015
     KEEP_OUT_RADIUS = 0.02
 
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.2, 0.8]),
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.8, max_children=2, start_at_one=False
+            ),  # No lamp with probability of ~0.8
             physics_geometry_info=None,
             observed=False,
         )
 
     @classmethod
     def generate_rules(cls):
-        rules = [
+        return [
             ProductionRule(
                 child_type=Lamp,
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
@@ -218,13 +287,7 @@ class LampOrNull(OrNode):
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
-            ProductionRule(
-                child_type=Null,
-                xyz_rule=SamePositionRule(),
-                rotation_rule=SameRotationRule(),
-            ),
         ]
-        return rules
 
 
 class BigBowlOrNull(OrNode):
@@ -321,8 +384,7 @@ class StackedBoardGamesOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.2, 0.8]),  # TODO
-            # rule_probs=torch.tensor([1.0, 0.0]),
+            rule_probs=torch.tensor([0.2, 0.8]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -362,6 +424,7 @@ class StackedBoardGamesOrNull(OrNode):
 
 
 class LyingBoardGame(OrNode):
+
     def __init__(self, tf):
         super().__init__(
             tf=tf,
@@ -408,41 +471,28 @@ class LargeBoardGame(OrNode):
 
     @classmethod
     def generate_rules(cls):
+        # The parent specifies the position and rotation rules.
         rules = [
             ProductionRule(
                 child_type=LyingClueBoardGame,
-                xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.0]),
-                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
-                ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2.0)),
-                    np.array([1e6, 1e6, 100]),
-                ),  # Allow some yaw rotation.
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
             ),
             ProductionRule(
                 child_type=LyingMonopolyBoardGame,
-                xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.0]),
-                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
-                ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2.0)),
-                    np.array([1e6, 1e6, 100]),
-                ),  # Allow some yaw rotation.
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
             ),
         ]
         return rules
 
 
-class LyingClueBoardGame(TerminalNode):
+class LyingClueBoardGame(OrNode):
     WIDTH = 0.5  # x-coordinate
     LENGTH = 0.25  # y-coordinate
     HEIGHT = 0.055  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(
-        LyingBalderdashBoardGame.WIDTH, LyingBalderdashBoardGame.LENGTH
-    )
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -450,17 +500,40 @@ class LyingClueBoardGame(TerminalNode):
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
             "package://gazebo/models/Clue_Board_Game_Classic_Edition/lying_model.sdf",
         )
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=geom,
+            observed=True,
+            rule_probs=torch.tensor([0.3, 0.7]),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=LargeBoardGame,
+                xyz_rule=SamePositionRule(
+                    offset=torch.tensor([0.0, 0.0, LyingClueBoardGame.HEIGHT]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(), np.array([1e6, 1e6, 5000])
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
 
 
-class LyingMonopolyBoardGame(TerminalNode):
+class LyingMonopolyBoardGame(OrNode):
     WIDTH = 0.4  # x-coordinate
     LENGTH = 0.265  # y-coordinate
     HEIGHT = 0.054  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(
-        LyingBalderdashBoardGame.WIDTH, LyingBalderdashBoardGame.LENGTH
-    )
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -468,10 +541,38 @@ class LyingMonopolyBoardGame(TerminalNode):
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
             "package://gazebo/models/My_Monopoly_Board_Game/lying_model.sdf",
         )
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=geom,
+            observed=True,
+            rule_probs=torch.tensor([0.3, 0.7]),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=LargeBoardGame,
+                xyz_rule=SamePositionRule(
+                    offset=torch.tensor([0.0, 0.0, LyingMonopolyBoardGame.HEIGHT]),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(), np.array([1e6, 1e6, 5000])
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
 
 
 class Lamp(TerminalNode):
+    SAVE_RADIUS = 0.015
+    KEEP_OUT_RADIUS = 0.02
+
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
