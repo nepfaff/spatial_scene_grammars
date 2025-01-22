@@ -264,6 +264,16 @@ class ShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=CokeCanOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=TeaBottleOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 
@@ -351,6 +361,88 @@ class BigBowlOrNull(OrNode):
         return rules
 
 
+class CokeCanOrNull(RepeatingSetNode):
+    KEEP_OUT_RADIUS = 0.0334
+    SAVE_RADIUS = KEEP_OUT_RADIUS + 0.01
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.8, max_children=6, start_at_one=False
+            ),  # No coke can with probability of ~0.8
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=CokeCan,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            0.063,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            0.064,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+        ]
+        return rules
+
+
+class TeaBottleOrNull(RepeatingSetNode):
+    KEEP_OUT_RADIUS = 0.0325
+    SAVE_RADIUS = KEEP_OUT_RADIUS + 0.01
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.8, max_children=6, start_at_one=False
+            ),  # No tea bottle with probability of ~0.8
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=TeaBottle,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            0.104,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            0.105,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+        ]
+        return rules
+
+
 class JBLSpeaker(TerminalNode):
     WIDTH = 0.175  # x-coordinate
     LENGTH = 0.07  # y-coordinate
@@ -425,7 +517,7 @@ class LyingBalderdashBoardGame(OrNode):
             tf=tf,
             physics_geometry_info=geom,
             observed=True,
-            rule_probs=torch.tensor([0.5, 0.5]),
+            rule_probs=torch.tensor([0.3, 0.7]),
         )
 
     @classmethod
@@ -460,7 +552,7 @@ class StackedBoardGamesOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.2, 0.8]),
+            rule_probs=torch.tensor([0.1, 0.9]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -710,6 +802,26 @@ class BigBowl(TerminalNode):
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
             "package://anzu/models/home_kitchen/bowls/generic_fruit_bowl.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class CokeCan(TerminalNode):
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/junk/coke.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class TeaBottle(TerminalNode):
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/junk/tea_bottle.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 

@@ -336,6 +336,7 @@ def compile_scene_tree_clearance_geometry_to_mbp_and_sg(
     scene_tree, timestep=0.001, alpha=0.25
 ):
     builder = DiagramBuilder()
+    mbp: MultibodyPlant
     mbp, scene_graph = AddMultibodyPlantSceneGraph(
         builder, MultibodyPlant(time_step=timestep)
     )
@@ -663,6 +664,7 @@ def project_tree_to_feasibility(
 ):
     # Mutates tree into tree with bodies in closest
     # nonpenetrating configuration.
+    mbp: MultibodyPlant
     builder, mbp, sg, node_to_free_body_ids_map, body_id_to_node_map, node_model_ids = (
         compile_scene_tree_to_mbp_and_sg(
             tree,

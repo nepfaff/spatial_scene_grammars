@@ -95,10 +95,10 @@ def sample_realistic_scene(
         deepcopy(good_tree),
         do_forward_sim=True,
         timestep=0.001,
-        T=1.5,
+        T=2.5,
         static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
-    feasible_tree = good_tree  # TODO: remove
+    # feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
 
 
@@ -109,13 +109,13 @@ grammar = SpatialSceneGrammar(
     root_node_type=Shelf,
     root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
 )
-constraints = [
+constraint_list = [
     # ObjectsInShelfConstraint(),
     # MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
     # SharedObjectsNotInCollisionWithPlateSettingsConstraint(table_node_type=Shelf),
 ]
 
-tree, _ = sample_realistic_scene(grammar, constraints)
+tree, _ = sample_realistic_scene(grammar, constraint_list)
 if tree is None:
     print("Sampling failed!")
     exit()
