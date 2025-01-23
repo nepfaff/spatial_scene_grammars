@@ -19,8 +19,8 @@ shelf_setting_or_large_board_game -> shelf_setting | large_board_game | null
 top_shelf_setting -> (lamp | null) | (big_bowl | null) | (stacked_board_games | null) |
     (speaker | null)
 shelf_setting -> (bowl | null) | (plate | null) | (coke | null) | (tea_bottle | null) |
-    (stacked_board_games | null) | (standing_board_games | null) | (speaker | null) |
-    (book | null) | null
+    (stacked_board_games | null) | (book | null) | (speaker | null) |
+    (nintendo_game | null) | null
 
 plate -> toast | null
 stacked_board_games -> lying_board_game | null
@@ -38,6 +38,7 @@ lamp -> null
 speaker -> null
 book -> null
 large_board_game (possible multiple options) -> null
+nintendo_game -> null
 
 # NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
 
@@ -250,11 +251,6 @@ class ShelfSetting(AndNode):
     def generate_rules(cls):
         return [
             ProductionRule(
-                child_type=Null,
-                xyz_rule=SamePositionRule(),
-                rotation_rule=SameRotationRule(),
-            ),
-            ProductionRule(
                 child_type=StackedBoardGamesOrNull,
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
@@ -271,6 +267,11 @@ class ShelfSetting(AndNode):
             ),
             ProductionRule(
                 child_type=TeaBottleOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=StandingEatToLiveBookOrNull,
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
@@ -351,6 +352,73 @@ class BigBowlOrNull(OrNode):
                     ),
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class StandingEatToLiveBook(TerminalNode):
+    WIDTH = 0.14  # x-coordinate
+    LENGTH = 0.05  # y-coordinate
+    HEIGHT = 0.21  # z-coordinate
+
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/Eat_to_Live_The_Amazing_NutrientRich_Program_for_Fast_and_Sustained_Weight_Loss_Revised_Edition_Book/model.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class StandingEatToLiveBookOrNull(OrNode):
+    SAVE_RADIUS = max(StandingEatToLiveBook.WIDTH, StandingEatToLiveBook.LENGTH)
+    KEEP_OUT_RADIUS = SAVE_RADIUS + 0.01
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.1, 0.9]),
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            # Leaning against left wall.
+            ProductionRule(
+                child_type=StandingEatToLiveBook,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + StandingEatToLiveBook.WIDTH / 2 + 0.01,
+                            -Shelf.LENGTH / 2 + StandingEatToLiveBook.LENGTH / 2,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - StandingEatToLiveBook.WIDTH / 2 - 0.01,
+                            -Shelf.LENGTH / 2
+                            + StandingEatToLiveBook.LENGTH / 2
+                            + 0.001,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=SameRotationRule(
+                    offset=torch.from_numpy(
+                        RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi)).matrix()
+                    )
+                ),
             ),
             ProductionRule(
                 child_type=Null,
@@ -596,7 +664,9 @@ class LyingBoardGame(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([1.0, 0.0]),  # TODO: Adjust probs
+            rule_probs=torch.tensor(
+                [1.0, 0.0]
+            ),  # TODO: Adjust probs once have multiple small board games
             physics_geometry_info=None,
             observed=False,
         )
