@@ -18,6 +18,8 @@ from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
 from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
+    BoardGameStackHeightConstraint,
+    LargeBoardGameStackHeightConstraint,
     MinNumObjectsConstraint,
     Shelf,
 )
@@ -110,8 +112,9 @@ grammar = SpatialSceneGrammar(
     root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
 )
 constraint_list = [
-    # ObjectsInShelfConstraint(),
-    # MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
+    BoardGameStackHeightConstraint(max_height=5),
+    LargeBoardGameStackHeightConstraint(max_height=3),
+    MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
     # SharedObjectsNotInCollisionWithPlateSettingsConstraint(table_node_type=Shelf),
 ]
 

@@ -43,10 +43,7 @@ stacking_ring -> null
 toy_train -> null
 # NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
 
-# TODO: Book options from gazebo and manipulation
-# TODO: Max board game stack height (see dumpling grammar)
-
-# TODO: Next is finishing shelf_setting.
+# TODO: Bad collisions as rejection sampling constraint (keep objects out of object stacks as in table scenes)
 
 Model visualizer is very useful:
 ```
@@ -1142,3 +1139,49 @@ class MinNumObjectsConstraint(StructureConstraint):
         self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
     ):
         raise NotImplementedError()
+
+
+class BoardGameStackHeightConstraint(StructureConstraint):
+    # The largest stack of board games should be less than N games tall
+    def __init__(self, max_height=5):
+        lb = torch.tensor([0])
+        ub = torch.tensor([max_height])
+        super().__init__(lower_bound=lb, upper_bound=ub)
+
+    def eval(self, scene_tree):
+        board_games = scene_tree.find_nodes_by_type(LyingBoardGame)
+        tallest_stack = 0
+        # For each board game, count how many ancestors are in the
+        # board game stack pattern (LyingBoardGame -> specific game -> LyingBoardGame...)
+        for game in board_games:
+            current_node = game
+            stack = 0
+            while current_node is not None:
+                if isinstance(current_node, LyingBoardGame):
+                    stack += 1
+                current_node = scene_tree.get_parent(current_node)
+            tallest_stack = max(tallest_stack, stack)
+        return torch.tensor([tallest_stack])
+
+
+class LargeBoardGameStackHeightConstraint(StructureConstraint):
+    # The largest stack of large board games should be less than N games tall
+    def __init__(self, max_height=3):
+        lb = torch.tensor([0])
+        ub = torch.tensor([max_height])
+        super().__init__(lower_bound=lb, upper_bound=ub)
+
+    def eval(self, scene_tree):
+        board_games = scene_tree.find_nodes_by_type(LargeBoardGame)
+        tallest_stack = 0
+        # For each board game, count how many ancestors are in the
+        # board game stack pattern (LargeBoardGame -> specific game -> LargeBoardGame...)
+        for game in board_games:
+            current_node = game
+            stack = 0
+            while current_node is not None:
+                if isinstance(current_node, LargeBoardGame):
+                    stack += 1
+                current_node = scene_tree.get_parent(current_node)
+            tallest_stack = max(tallest_stack, stack)
+        return torch.tensor([tallest_stack])
