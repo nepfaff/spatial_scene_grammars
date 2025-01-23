@@ -20,7 +20,7 @@ top_shelf_setting -> (lamp | null) | (big_bowl | null) | (stacked_board_games | 
     (speaker | null)
 shelf_setting -> (bowl | null) | (plate | null) | (coke | null) | (tea_bottle | null) |
     (stacked_board_games | null) | (book | null) | (speaker | null) |
-    (nintendo_game | null) | null
+    (nintendo_game | null) | (stacking_ring | null)
 
 plate -> toast | null
 stacked_board_games -> lying_board_game | null
@@ -39,6 +39,7 @@ speaker -> null
 book -> null
 large_board_game (possible multiple options) -> null
 nintendo_game -> nintendo_game | null
+stacking_ring -> null
 
 # NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
 
@@ -280,6 +281,11 @@ class ShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=StackingRingOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 
@@ -424,6 +430,62 @@ class StandingEatToLiveBookOrNull(OrNode):
                         RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi)).matrix()
                     )
                 ),
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class StackingRing(TerminalNode):
+    KEEP_OUT_RADIUS = 0.01
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/STACKING_RING/model.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class StackingRingOrNull(OrNode):
+    SAVE_RADIUS = StackingRing.KEEP_OUT_RADIUS
+    KEEP_OUT_RADIUS = StackingRing.KEEP_OUT_RADIUS
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.1, 0.9]),
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=StackingRing,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + StackingRing.KEEP_OUT_RADIUS / 2,
+                            -Shelf.LENGTH / 2 + StackingRing.KEEP_OUT_RADIUS / 2,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - StackingRing.KEEP_OUT_RADIUS / 2,
+                            Shelf.LENGTH / 2 - StackingRing.KEEP_OUT_RADIUS / 2,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=Null,
