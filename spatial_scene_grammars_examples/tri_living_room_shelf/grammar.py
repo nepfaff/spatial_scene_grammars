@@ -38,7 +38,7 @@ lamp -> null
 speaker -> null
 book -> null
 large_board_game (possible multiple options) -> null
-nintendo_game -> null
+nintendo_game -> nintendo_game | null
 
 # NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
 
@@ -275,6 +275,11 @@ class ShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=NintendoGameOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 
@@ -419,6 +424,90 @@ class StandingEatToLiveBookOrNull(OrNode):
                         RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi)).matrix()
                     )
                 ),
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class NintendoGame(OrNode):
+    WIDTH = 0.14  # x-coordinate
+    LENGTH = 0.125  # y-coordinate
+    HEIGHT = 0.0125  # z-coordinate
+
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/Pokmon_Y_Nintendo_3DS_Game/model.sdf",
+        )
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=geom,
+            observed=True,
+            rule_probs=torch.tensor([0.3, 0.7]),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=NintendoGame,
+                xyz_rule=WorldFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, NintendoGame.HEIGHT]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class NintendoGameOrNull(OrNode):
+    SAVE_RADIUS = max(NintendoGame.WIDTH, NintendoGame.LENGTH)
+    KEEP_OUT_RADIUS = SAVE_RADIUS + 0.01
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.2, 0.8]),
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=NintendoGame,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + NintendoGame.WIDTH,
+                            -Shelf.LENGTH / 2 + NintendoGame.LENGTH,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - NintendoGame.WIDTH,
+                            Shelf.LENGTH / 2 - NintendoGame.LENGTH,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=Null,
