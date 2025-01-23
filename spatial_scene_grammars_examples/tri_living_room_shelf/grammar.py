@@ -20,7 +20,7 @@ top_shelf_setting -> (lamp | null) | (big_bowl | null) | (stacked_board_games | 
     (speaker | null)
 shelf_setting -> (bowl | null) | (plate | null) | (coke | null) | (tea_bottle | null) |
     (stacked_board_games | null) | (book | null) | (speaker | null) |
-    (nintendo_game | null) | (stacking_ring | null)
+    (nintendo_game | null) | (stacking_ring | null) | (toy_train | null)
 
 plate -> toast | null
 stacked_board_games -> lying_board_game | null
@@ -40,7 +40,7 @@ book -> null
 large_board_game (possible multiple options) -> null
 nintendo_game -> nintendo_game | null
 stacking_ring -> null
-
+toy_train -> null
 # NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
 
 # TODO: Book options from gazebo and manipulation
@@ -286,6 +286,11 @@ class ShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=ToyTrainOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 
@@ -481,6 +486,69 @@ class StackingRingOrNull(OrNode):
                         [
                             Shelf.WIDTH / 2 - StackingRing.KEEP_OUT_RADIUS / 2,
                             Shelf.LENGTH / 2 - StackingRing.KEEP_OUT_RADIUS / 2,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class ToyTrain(TerminalNode):
+    WIDTH = 0.04  # x-coordinate
+    LENGTH = 0.09  # y-coordinate
+
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/Thomas_Friends_Wooden_Railway_Talking_Thomas/model.sdf",
+        )
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=geom,
+            observed=True,
+        )
+
+
+class ToyTrainOrNull(OrNode):
+    SAVE_RADIUS = max(ToyTrain.WIDTH, ToyTrain.LENGTH)
+    KEEP_OUT_RADIUS = SAVE_RADIUS + 0.01
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.1, 0.9]),
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=ToyTrain,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
                             0.001,
                         ]
                     ),
