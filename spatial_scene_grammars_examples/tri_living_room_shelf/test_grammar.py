@@ -22,6 +22,7 @@ from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
     LargeBoardGameStackHeightConstraint,
     MinNumObjectsConstraint,
     Shelf,
+    ObjectsNotInCollisionWithStacksConstraint,
 )
 
 
@@ -100,7 +101,7 @@ def sample_realistic_scene(
         T=2.5,
         static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
-    # feasible_tree = good_tree  # TODO: remove
+    feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
 
 
@@ -115,7 +116,7 @@ constraint_list = [
     BoardGameStackHeightConstraint(max_height=5),
     LargeBoardGameStackHeightConstraint(max_height=3),
     MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
-    # SharedObjectsNotInCollisionWithPlateSettingsConstraint(table_node_type=Shelf),
+    ObjectsNotInCollisionWithStacksConstraint(),
 ]
 
 tree, _ = sample_realistic_scene(grammar, constraint_list)

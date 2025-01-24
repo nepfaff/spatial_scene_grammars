@@ -1,3 +1,4 @@
+from socket import J1939_NLA_BYTES_ACKED
 import torch
 from pydrake.all import RigidTransform, RollPitchYaw
 
@@ -30,7 +31,6 @@ lying_board_game -> lying_board_game | null
 standing_board_game -> standing_board_game | null
 
 big_bowl -> null
-bowl -> null
 toast -> null
 coke -> null
 tea_bottle -> null
@@ -44,6 +44,7 @@ toy_train -> null
 # NOTE: Could use box collision geometries for board games but might require mesh re-alignment.
 
 # TODO: Bad collisions as rejection sampling constraint (keep objects out of object stacks as in table scenes)
+# TODO: Add plate and toast. Toast should have max stack of 3.
 
 Model visualizer is very useful:
 ```
@@ -1185,3 +1186,85 @@ class LargeBoardGameStackHeightConstraint(StructureConstraint):
                 current_node = scene_tree.get_parent(current_node)
             tallest_stack = max(tallest_stack, stack)
         return torch.tensor([tallest_stack])
+
+
+class ObjectsNotInCollisionWithStacksConstraint(StructureConstraint):
+    def __init__(self):
+        super().__init__(
+            lower_bound=torch.tensor([0.0]), upper_bound=torch.tensor([torch.inf])
+        )
+
+    def eval(self, scene_tree):
+        shelves = scene_tree.find_nodes_by_type(Shelf)
+        for shelf in shelves:
+            # Get object stacks.
+            board_game_stack = scene_tree.get_children_recursive(
+                shelf, StackedBoardGamesOrNull
+            )
+            board_game_stack_objects = (
+                np.array([scene_tree.get_children(p) for p in board_game_stack])
+                .flatten()
+                .tolist()
+            )
+            nintendo_game_stack = scene_tree.get_children_recursive(
+                shelf, NintendoGameOrNull
+            )
+            nintendo_game_stack_objects = (
+                np.array([scene_tree.get_children(p) for p in nintendo_game_stack])
+                .flatten()
+                .tolist()
+            )
+            # Remove unobserved objects.
+            board_game_stack_objects = [
+                obj for obj in board_game_stack_objects if obj.observed
+            ]
+            nintendo_game_stack_objects = [
+                obj for obj in nintendo_game_stack_objects if obj.observed
+            ]
+            stack_objects = board_game_stack_objects + nintendo_game_stack_objects
+
+            # Get other objects.
+            other_objects = scene_tree.get_children_recursive(shelf)
+            object_stack_classes = (
+                LyingBalderdashBoardGame,
+                LyingClueBoardGame,
+                LyingMonopolyBoardGame,
+                LyingSlidersBoardGame,
+                NintendoGame,
+            )
+            other_objects = [
+                obj
+                for obj in other_objects
+                if not isinstance(obj, object_stack_classes) and obj.observed
+            ]
+
+            print("TEST", len(stack_objects), len(other_objects))
+            import IPython
+
+            IPython.embed()  # TODO: remove
+
+            if len(stack_objects) == 0 or len(other_objects) == 0:
+                # Constraint trivially satisfied.
+                return torch.tensor([1.0])
+
+            # Extract translations and keep out radii.
+            stack_translations = torch.stack(
+                [obj.translation[:2] for obj in stack_objects]
+            )
+            other_translations = torch.stack(
+                [other_obj.translation[:2] for other_obj in other_objects]
+            )
+            keep_out_radii = torch.tensor(
+                [other_obj.KEEP_OUT_RADIUS for other_obj in other_objects]
+            )
+
+            import IPython
+
+            IPython.embed()  # TODO: remove
+
+            # Compute the distance matrix between all pairs of objects and shared
+            # objects.
+            distances = torch.cdist(stack_translations, other_translations)
+
+            # Negative if any object is within keep out radius of any shared object.
+            return torch.flatten(distances - keep_out_radii).unsqueeze(1)
