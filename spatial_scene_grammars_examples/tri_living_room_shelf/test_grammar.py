@@ -21,8 +21,8 @@ from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
     BoardGameStackHeightConstraint,
     LargeBoardGameStackHeightConstraint,
     MinNumObjectsConstraint,
-    Shelf,
     ObjectsNotInCollisionWithStacksConstraint,
+    Shelf,
 )
 
 
@@ -42,53 +42,57 @@ def sample_realistic_scene(
     else:
         tree = grammar.sample_tree(detach=True)
 
-    print("HMC sampling with constraints.")
-    samples = do_fixed_structure_hmc_with_constraint_penalties(
-        grammar,
-        tree,
-        num_samples=25,
-        subsample_step=1,
-        with_nonpenetration=False,  # Too difficult
-        zmq_url="",
-        constraints=pose_constraints,
-        kernel_type="NUTS",
-        max_tree_depth=6,
-        target_accept_prob=0.8,
-        adapt_step_size=True,
-        verbose=-1,
-        # kernel_type="HMC", num_steps=1, step_size=1E-1, adapt_step_size=False, # Langevin-ish
-        structure_vis_kwargs={
-            "with_triad": False,
-            "linewidth": 30,
-            "node_sphere_size": 0.02,
-            "alpha": 0.5,
-        },
-    )
-
-    # Step through samples backwards in HMC process and pick out a tree that satisfies
-    # the constraints.
-    good_tree = None
-    best_bad_tree = None
-    best_violation = None
-    for candidate_tree in samples[::-1]:
-        total_violation = eval_total_constraint_set_violation(
-            candidate_tree, constraints
+    if len(pose_constraints) > 0:
+        print("HMC sampling with constraints.")
+        samples = do_fixed_structure_hmc_with_constraint_penalties(
+            grammar,
+            tree,
+            num_samples=25,
+            subsample_step=1,
+            with_nonpenetration=False,  # Too difficult
+            zmq_url="",
+            constraints=pose_constraints,
+            kernel_type="NUTS",
+            max_tree_depth=6,
+            target_accept_prob=0.8,
+            adapt_step_size=True,
+            verbose=-1,
+            # kernel_type="HMC", num_steps=1, step_size=1E-1, adapt_step_size=False, # Langevin-ish
+            structure_vis_kwargs={
+                "with_triad": False,
+                "linewidth": 30,
+                "node_sphere_size": 0.02,
+                "alpha": 0.5,
+            },
         )
-        if total_violation <= 0.0:
-            good_tree = candidate_tree
-            break
-        else:
-            if best_bad_tree is None or total_violation <= best_violation:
-                best_bad_tree = candidate_tree
-                best_violation = total_violation.detach()
 
-    if good_tree == None:
-        logging.error("No tree in samples satisfied constraints.")
-        print("Best total violation: %f" % best_violation)
-        print("Violations of best bad tree:")
-        for constraint in constraints:
-            print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
-        return None, None
+        # Step through samples backwards in HMC process and pick out a tree that satisfies
+        # the constraints.
+        good_tree = None
+        best_bad_tree = None
+        best_violation = None
+        for candidate_tree in samples[::-1]:
+            total_violation = eval_total_constraint_set_violation(
+                candidate_tree, constraints
+            )
+            if total_violation <= 0.0:
+                good_tree = candidate_tree
+                break
+            else:
+                if best_bad_tree is None or total_violation <= best_violation:
+                    best_bad_tree = candidate_tree
+                    best_violation = total_violation.detach()
+
+        if good_tree == None:
+            logging.error("No tree in samples satisfied constraints.")
+            print("Best total violation: %f" % best_violation)
+            print("Violations of best bad tree:")
+            for constraint in constraints:
+                print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
+            return None, None
+    else:
+        # Don't need HMC if have no pose constraints.
+        good_tree = tree
 
     if skip_physics_constraints:
         return None, good_tree

@@ -972,7 +972,7 @@ class StackedBoardGamesOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.1, 0.1, 0.8]),
+            rule_probs=torch.tensor([0.15, 0.15, 0.7]),
             physics_geometry_info=None,
             observed=False,
         )
