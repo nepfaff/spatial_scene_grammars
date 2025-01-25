@@ -214,36 +214,39 @@ def sample_realistic_scene(
     else:
         tree = grammar.sample_tree(detach=True)
 
-    samples = do_fixed_structure_hmc_with_constraint_penalties(
-        grammar,
-        tree,
-        num_samples=25,
-        subsample_step=1,
-        with_nonpenetration=False,
-        zmq_url="",
-        constraints=pose_constraints,
-        kernel_type="NUTS",
-        max_tree_depth=6,
-        target_accept_prob=0.8,
-        adapt_step_size=True,
-        verbose=-1,
-    )
-
-    # Check samples for constraint satisfaction
-    good_tree = None
-    best_bad_tree = None
-    best_violation = None
-    for candidate_tree in samples[::-1]:
-        total_violation = eval_total_constraint_set_violation(
-            candidate_tree, constraints
+    if len(pose_constraints) > 0:
+        samples = do_fixed_structure_hmc_with_constraint_penalties(
+            grammar,
+            tree,
+            num_samples=25,
+            subsample_step=1,
+            with_nonpenetration=False,
+            zmq_url="",
+            constraints=pose_constraints,
+            kernel_type="NUTS",
+            max_tree_depth=6,
+            target_accept_prob=0.8,
+            adapt_step_size=True,
+            verbose=-1,
         )
-        if total_violation <= 0.0:
-            good_tree = candidate_tree
-            break
-        else:
-            if best_bad_tree is None or total_violation <= best_violation:
-                best_bad_tree = candidate_tree
-                best_violation = total_violation.detach()
+
+        # Check samples for constraint satisfaction
+        good_tree = None
+        best_bad_tree = None
+        best_violation = None
+        for candidate_tree in samples[::-1]:
+            total_violation = eval_total_constraint_set_violation(
+                candidate_tree, constraints
+            )
+            if total_violation <= 0.0:
+                good_tree = candidate_tree
+                break
+            else:
+                if best_bad_tree is None or total_violation <= best_violation:
+                    best_bad_tree = candidate_tree
+                    best_violation = total_violation.detach()
+    else:
+        good_tree = tree
 
     if good_tree is None:
         # No tree in samples satisfied constraints.
@@ -257,7 +260,7 @@ def sample_realistic_scene(
         do_forward_sim=True,
         timestep=0.001,
         T=2.5,
-        static_models="package://drake_models/manipulation_station/table.sdf",
+        static_models="package://anzu/models/visuomotor/add_riverway_without_arms.dmd.yaml",
     )
     return feasible_tree, good_tree
 
