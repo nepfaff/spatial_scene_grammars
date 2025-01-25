@@ -284,7 +284,7 @@ def main():
 
     pool = Pool(processes=processes)
 
-    chunk_size = 1000 if N > 1000 else N
+    chunk_size = 10000 if N > 10000 else N
     num_chunks = N // chunk_size
     remainder = N % chunk_size
 
