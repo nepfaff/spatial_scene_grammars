@@ -39,14 +39,12 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.tri_table.grammar import (
+from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
+    BoardGameStackHeightConstraint,
+    LargeBoardGameStackHeightConstraint,
     MinNumObjectsConstraint,
-    ObjectsOnTableConstraint,
-    SharedObjectsNotInCollisionWithPlateSettingsConstraint,
-    Table,
-)
-from spatial_scene_grammars_examples.tri_table.grammar_high_clutter import (
-    Table as HighClutterTable,
+    ObjectsNotInCollisionWithStacksConstraint,
+    Shelf,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -92,57 +90,23 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
         for node in observed_nodes:
             translation = np.array(node.translation)
 
-            # Extract the local z-axis of the object's rotation matrix.
-            local_z_axis = np.array(node.rotation) @ np.array([0, 0, 1])
-
-            main_objects = (
-                spatial_scene_grammars_examples.tri_table.grammar.MainPlate,
-                spatial_scene_grammars_examples.tri_table.grammar.MainBowl,
-                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.MainPlate,
-                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.MainBowl,
-            )
-            if isinstance(node, main_objects):
-                # Ideally we remove the entire plate setting but we just drop the scene
-                # for simplicity.
-
-                # Should have close to zero translation.
-                if not np.allclose(translation[2], 0.0, atol=3e-3, rtol=0.0):
-                    return None
-
-                # Should have close to zero roll and pitch.
-                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
-                    return None
-
             # Remove nodes with translation above 5m in any direction.
-            if np.any(np.abs(translation) > 5.0):
+            if np.any(np.abs(translation) > 5):
                 continue
 
-            # Not sure why need full path here for this to work.
-            shared_objects = (
-                spatial_scene_grammars_examples.tri_table.grammar.SharedPlate,
-                spatial_scene_grammars_examples.tri_table.grammar.SharedBowl,
-                spatial_scene_grammars_examples.tri_table.grammar.CerealBox,
-                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.SharedPlate,
-                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.SharedBowl,
-                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.CerealBox,
+            objects = (
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.Lamp,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.BigBowl,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.StandingEatToLiveBook,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.StackingRing,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.ToyTrain,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.CokeCan,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.TeaBottle,
+                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.JBLSpeaker,
             )
-            if isinstance(node, shared_objects):
-                # Should have close to zero translation.
-                if not np.allclose(translation[2], 0.0, atol=3e-3, rtol=0.0):
-                    continue
-
-                # Should have close to zero roll and pitch.
-                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
-                    continue
-
-            jugs = (
-                spatial_scene_grammars_examples.tri_table.grammar.Jug,
-                spatial_scene_grammars_examples.tri_table.grammar_high_clutter.Jug,
-            )
-            if isinstance(node, jugs):
-                # Should have close to 0.091m translation in z (frame at center).
-                if not np.allclose(translation[2], 0.091, atol=3e-3, rtol=0.0):
-                    continue
+            if isinstance(node, objects):
+                # Extract the local z-axis of the object's rotation matrix.
+                local_z_axis = np.array(node.rotation) @ np.array([0, 0, 1])
 
                 # Should have close to zero roll and pitch.
                 if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
@@ -214,36 +178,39 @@ def sample_realistic_scene(
     else:
         tree = grammar.sample_tree(detach=True)
 
-    samples = do_fixed_structure_hmc_with_constraint_penalties(
-        grammar,
-        tree,
-        num_samples=25,
-        subsample_step=1,
-        with_nonpenetration=False,
-        zmq_url="",
-        constraints=pose_constraints,
-        kernel_type="NUTS",
-        max_tree_depth=6,
-        target_accept_prob=0.8,
-        adapt_step_size=True,
-        verbose=-1,
-    )
-
-    # Check samples for constraint satisfaction
-    good_tree = None
-    best_bad_tree = None
-    best_violation = None
-    for candidate_tree in samples[::-1]:
-        total_violation = eval_total_constraint_set_violation(
-            candidate_tree, constraints
+    if len(pose_constraints) > 0:
+        samples = do_fixed_structure_hmc_with_constraint_penalties(
+            grammar,
+            tree,
+            num_samples=25,
+            subsample_step=1,
+            with_nonpenetration=False,
+            zmq_url="",
+            constraints=pose_constraints,
+            kernel_type="NUTS",
+            max_tree_depth=6,
+            target_accept_prob=0.8,
+            adapt_step_size=True,
+            verbose=-1,
         )
-        if total_violation <= 0.0:
-            good_tree = candidate_tree
-            break
-        else:
-            if best_bad_tree is None or total_violation <= best_violation:
-                best_bad_tree = candidate_tree
-                best_violation = total_violation.detach()
+
+        # Check samples for constraint satisfaction
+        good_tree = None
+        best_bad_tree = None
+        best_violation = None
+        for candidate_tree in samples[::-1]:
+            total_violation = eval_total_constraint_set_violation(
+                candidate_tree, constraints
+            )
+            if total_violation <= 0.0:
+                good_tree = candidate_tree
+                break
+            else:
+                if best_bad_tree is None or total_violation <= best_violation:
+                    best_bad_tree = candidate_tree
+                    best_violation = total_violation.detach()
+    else:
+        good_tree = tree
 
     if good_tree is None:
         # No tree in samples satisfied constraints.
@@ -257,7 +224,7 @@ def sample_realistic_scene(
         do_forward_sim=True,
         timestep=0.001,
         T=2.5,
-        static_models="package://drake_models/manipulation_station/table.sdf",
+        static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
     return feasible_tree, good_tree
 
@@ -295,30 +262,24 @@ def main():
     parser.add_argument("--points", type=int)
     parser.add_argument("--workers", type=int, default=mp.cpu_count())
     parser.add_argument("--extract", type=bool, default=True)
-    parser.add_argument("--high_clutter", type=bool, default=False)
     args = parser.parse_args()
     dataset_save_file: str = args.dataset_save_file
     assert dataset_save_file.endswith(".pkl")
     extract: bool = args.extract
-    high_clutter: bool = args.high_clutter
     N: int = args.points
     processes: int = min(args.workers, mp.cpu_count())
 
     start = time.time()
 
     grammar = SpatialSceneGrammar(
-        root_node_type=HighClutterTable if high_clutter else Table,
+        root_node_type=Shelf,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
-    constraints = [
-        ObjectsOnTableConstraint(),
-        MinNumObjectsConstraint(
-            min_num_objects=3,
-            table_node_type=HighClutterTable if high_clutter else Table,
-        ),
-        SharedObjectsNotInCollisionWithPlateSettingsConstraint(
-            table_node_type=HighClutterTable if high_clutter else Table
-        ),
+    constraint_list = [
+        BoardGameStackHeightConstraint(max_height=5),
+        LargeBoardGameStackHeightConstraint(max_height=3),
+        MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
+        ObjectsNotInCollisionWithStacksConstraint(),
     ]
 
     pool = Pool(processes=processes)
@@ -328,7 +289,7 @@ def main():
     remainder = N % chunk_size
 
     task_func = sample_and_save
-    task_args = (grammar, constraints, extract)
+    task_args = (grammar, constraint_list, extract)
     task_timeout = 500
 
     # Process full chunks, write after each chunk
