@@ -101,7 +101,7 @@ def sample_realistic_scene(
         T=2.5,
         static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
-    feasible_tree = good_tree  # TODO: remove
+    # feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
 
 

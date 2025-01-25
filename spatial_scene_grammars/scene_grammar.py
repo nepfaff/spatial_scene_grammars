@@ -78,6 +78,22 @@ class SceneTree(nx.DiGraph):
         return sorted(list(self.successors(parent)), key=lambda x: x.rule_k)
 
     def get_children_recursive(self, parent, type_filter: tp.Optional[tp.Type] = None):
+        """Recursively retrieves all children of a given parent node in the scene tree.
+
+        This function traverses the scene tree starting from the specified parent node,
+        collecting all descendant nodes. If a type_filter is provided, only nodes that
+        match the specified type will be included in the results. The filtering process
+        is greedy, meaning that it checks each child node as it is encountered and
+        includes it in the results if it matches the type_filter.
+
+        Args:
+            parent: The parent node from which to start the search for children.
+            type_filter: An optional type to filter the children by their class type.
+
+        Returns:
+            A list of all child nodes (and their descendants) that match the type_filter,
+            or all child nodes if no type_filter is provided.
+        """
         unexpanded = [parent]
         all_children = []
         while len(unexpanded) > 0:

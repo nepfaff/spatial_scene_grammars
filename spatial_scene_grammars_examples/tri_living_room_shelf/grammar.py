@@ -1,4 +1,3 @@
-from socket import J1939_NLA_BYTES_ACKED
 import torch
 from pydrake.all import RigidTransform, RollPitchYaw
 
@@ -292,10 +291,20 @@ class ShelfSetting(AndNode):
         ]
 
 
-class LampOrNull(RepeatingSetNode):
+class Lamp(TerminalNode):
     SAVE_RADIUS = 0.015
     KEEP_OUT_RADIUS = 0.02
 
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://gazebo/models/3D_Dollhouse_Lamp/model.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class LampOrNull(RepeatingSetNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
@@ -314,15 +323,15 @@ class LampOrNull(RepeatingSetNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
-                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.WIDTH / 2 + Lamp.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + Lamp.SAVE_RADIUS,
                             0.0,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
-                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.WIDTH / 2 - Lamp.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - Lamp.SAVE_RADIUS,
                             0.001,
                         ]
                     ),
@@ -332,9 +341,20 @@ class LampOrNull(RepeatingSetNode):
         ]
 
 
-class BigBowlOrNull(OrNode):
+class BigBowl(TerminalNode):
     SAVE_RADIUS = 0.11
     KEEP_OUT_RADIUS = 0.1
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/bowls/generic_fruit_bowl.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class BigBowlOrNull(OrNode):
 
     def __init__(self, tf):
         super().__init__(
@@ -352,15 +372,15 @@ class BigBowlOrNull(OrNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
-                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.WIDTH / 2 + BigBowl.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + BigBowl.SAVE_RADIUS,
                             0.0,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
-                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.WIDTH / 2 - BigBowl.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - BigBowl.SAVE_RADIUS,
                             0.001,
                         ]
                     ),
@@ -381,7 +401,7 @@ class StandingEatToLiveBook(TerminalNode):
     LENGTH = 0.05  # y-coordinate
     HEIGHT = 0.21  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -444,7 +464,7 @@ class StandingEatToLiveBookOrNull(OrNode):
 
 
 class StackingRing(TerminalNode):
-    KEEP_OUT_RADIUS = 0.01
+    KEEP_OUT_RADIUS = 0.04
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -475,15 +495,15 @@ class StackingRingOrNull(OrNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + StackingRing.KEEP_OUT_RADIUS / 2,
-                            -Shelf.LENGTH / 2 + StackingRing.KEEP_OUT_RADIUS / 2,
+                            -Shelf.WIDTH / 2 + StackingRing.KEEP_OUT_RADIUS,
+                            -Shelf.LENGTH / 2 + StackingRing.KEEP_OUT_RADIUS,
                             0.0,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - StackingRing.KEEP_OUT_RADIUS / 2,
-                            Shelf.LENGTH / 2 - StackingRing.KEEP_OUT_RADIUS / 2,
+                            Shelf.WIDTH / 2 - StackingRing.KEEP_OUT_RADIUS,
+                            Shelf.LENGTH / 2 - StackingRing.KEEP_OUT_RADIUS,
                             0.001,
                         ]
                     ),
@@ -503,7 +523,7 @@ class ToyTrain(TerminalNode):
     WIDTH = 0.04  # x-coordinate
     LENGTH = 0.09  # y-coordinate
 
-    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -538,15 +558,15 @@ class ToyTrainOrNull(OrNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
-                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.WIDTH / 2 + ToyTrain.KEEP_OUT_RADIUS,
+                            -Shelf.LENGTH / 2 + ToyTrain.KEEP_OUT_RADIUS,
                             0.0,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
-                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.WIDTH / 2 - ToyTrain.KEEP_OUT_RADIUS,
+                            Shelf.LENGTH / 2 - ToyTrain.KEEP_OUT_RADIUS,
                             0.001,
                         ]
                     ),
@@ -567,7 +587,7 @@ class NintendoGame(OrNode):
     LENGTH = 0.125  # y-coordinate
     HEIGHT = 0.0125  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -602,14 +622,16 @@ class NintendoGame(OrNode):
         return rules
 
 
-class NintendoGameOrNull(OrNode):
-    SAVE_RADIUS = max(NintendoGame.WIDTH, NintendoGame.LENGTH)
+class NintendoGameOrNull(RepeatingSetNode):
+    SAVE_RADIUS = max(NintendoGame.WIDTH, NintendoGame.LENGTH) / 2.0
     KEEP_OUT_RADIUS = SAVE_RADIUS + 0.01
 
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.2, 0.8]),
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.8, max_children=3, start_at_one=False
+            ),  # No game can with probability of ~0.8
             physics_geometry_info=None,
             observed=False,
         )
@@ -637,19 +659,24 @@ class NintendoGameOrNull(OrNode):
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
-            ProductionRule(
-                child_type=Null,
-                xyz_rule=SamePositionRule(),
-                rotation_rule=SameRotationRule(),
-            ),
         ]
         return rules
 
 
-class CokeCanOrNull(RepeatingSetNode):
+class CokeCan(TerminalNode):
     KEEP_OUT_RADIUS = 0.0334
     SAVE_RADIUS = KEEP_OUT_RADIUS + 0.01
 
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/junk/coke.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class CokeCanOrNull(RepeatingSetNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
@@ -668,15 +695,15 @@ class CokeCanOrNull(RepeatingSetNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
-                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.WIDTH / 2 + CokeCan.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + CokeCan.SAVE_RADIUS,
                             0.063,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
-                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.WIDTH / 2 - CokeCan.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - CokeCan.SAVE_RADIUS,
                             0.064,
                         ]
                     ),
@@ -687,10 +714,20 @@ class CokeCanOrNull(RepeatingSetNode):
         return rules
 
 
-class TeaBottleOrNull(RepeatingSetNode):
+class TeaBottle(TerminalNode):
     KEEP_OUT_RADIUS = 0.0325
     SAVE_RADIUS = KEEP_OUT_RADIUS + 0.01
 
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/junk/tea_bottle.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class TeaBottleOrNull(RepeatingSetNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
@@ -709,15 +746,15 @@ class TeaBottleOrNull(RepeatingSetNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
-                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.WIDTH / 2 + TeaBottle.SAVE_RADIUS,
+                            -Shelf.LENGTH / 2 + TeaBottle.SAVE_RADIUS,
                             0.104,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
-                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.WIDTH / 2 - TeaBottle.SAVE_RADIUS,
+                            Shelf.LENGTH / 2 - TeaBottle.SAVE_RADIUS,
                             0.105,
                         ]
                     ),
@@ -792,6 +829,8 @@ class LyingBalderdashBoardGame(OrNode):
     LENGTH = 0.264  # y-coordinate
     HEIGHT = 0.06  # z-coordinate
 
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
+
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
@@ -825,19 +864,15 @@ class LyingBalderdashBoardGame(OrNode):
 
 
 class StackedBoardGamesOrNull(OrNode):
-    KEEP_OUT_RADIUS = (
-        max(
-            LyingBalderdashBoardGame.WIDTH,
-            LyingBalderdashBoardGame.LENGTH,
-        )
-        / 2.0
-    )
+    MAX_WIDTH = LyingBalderdashBoardGame.WIDTH
+    MAX_LENGTH = LyingBalderdashBoardGame.LENGTH
+    KEEP_OUT_RADIUS = max(MAX_WIDTH, MAX_LENGTH) / 2.0
     SAVE_RADIUS = KEEP_OUT_RADIUS + 0.01
 
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.1, 0.9]),
+            rule_probs=torch.tensor([0.05, 0.05, 0.9]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -850,21 +885,44 @@ class StackedBoardGamesOrNull(OrNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     lb=torch.tensor(
                         [
-                            -Shelf.WIDTH / 2 + cls.SAVE_RADIUS,
-                            -Shelf.LENGTH / 2 + cls.SAVE_RADIUS,
+                            -Shelf.WIDTH / 2 + cls.MAX_WIDTH / 2 + 0.03,
+                            -Shelf.LENGTH / 2 + cls.MAX_LENGTH / 2,
                             0.0,
                         ]
                     ),
                     ub=torch.tensor(
                         [
-                            Shelf.WIDTH / 2 - cls.SAVE_RADIUS,
-                            Shelf.LENGTH / 2 - cls.SAVE_RADIUS,
+                            Shelf.WIDTH / 2 - cls.MAX_WIDTH / 2,
+                            Shelf.LENGTH / 2 - cls.MAX_LENGTH / 2,
                             0.001,
                         ]
                     ),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
                     RotationMatrix(), np.array([1e6, 1e6, 500])
+                ),  # Allow some yaw rotation.
+            ),
+            ProductionRule(  # Rotated by 90 degrees about yaw axis
+                child_type=LyingBoardGame,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + cls.MAX_LENGTH / 2 + 0.03,
+                            -Shelf.LENGTH / 2 + cls.MAX_WIDTH / 2,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - cls.MAX_LENGTH / 2,
+                            Shelf.LENGTH / 2 - cls.MAX_WIDTH / 2,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(roll=0.0, pitch=0.0, yaw=np.pi / 2)),
+                    np.array([1e6, 1e6, 500]),
                 ),  # Allow some yaw rotation.
             ),
             ProductionRule(
@@ -952,7 +1010,7 @@ class LyingClueBoardGame(OrNode):
     LENGTH = 0.25  # y-coordinate
     HEIGHT = 0.055  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -993,7 +1051,7 @@ class LyingMonopolyBoardGame(OrNode):
     LENGTH = 0.265  # y-coordinate
     HEIGHT = 0.055  # z-coordinate
 
-    KEEP_OUT_RADIUS = max(WIDTH, LENGTH)
+    KEEP_OUT_RADIUS = max(WIDTH, LENGTH) / 2.0
 
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
@@ -1068,49 +1126,6 @@ class LyingSlidersBoardGame(OrNode):
             ),
         ]
         return rules
-
-
-class Lamp(TerminalNode):
-    SAVE_RADIUS = 0.015
-    KEEP_OUT_RADIUS = 0.02
-
-    def __init__(self, tf):
-        geom = PhysicsGeometryInfo(fixed=False)
-        geom.register_model_file(
-            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://gazebo/models/3D_Dollhouse_Lamp/model.sdf",
-        )
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
-
-
-class BigBowl(TerminalNode):
-    def __init__(self, tf):
-        geom = PhysicsGeometryInfo(fixed=False)
-        geom.register_model_file(
-            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/bowls/generic_fruit_bowl.sdf",
-        )
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
-
-
-class CokeCan(TerminalNode):
-    def __init__(self, tf):
-        geom = PhysicsGeometryInfo(fixed=False)
-        geom.register_model_file(
-            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/junk/coke.sdf",
-        )
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
-
-
-class TeaBottle(TerminalNode):
-    def __init__(self, tf):
-        geom = PhysicsGeometryInfo(fixed=False)
-        geom.register_model_file(
-            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/junk/tea_bottle.sdf",
-        )
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
 
 class Null(TerminalNode):
@@ -1196,75 +1211,77 @@ class ObjectsNotInCollisionWithStacksConstraint(StructureConstraint):
 
     def eval(self, scene_tree):
         shelves = scene_tree.find_nodes_by_type(Shelf)
+        min_distances = []
+
         for shelf in shelves:
-            # Get object stacks.
-            board_game_stack = scene_tree.get_children_recursive(
-                shelf, StackedBoardGamesOrNull
-            )
-            board_game_stack_objects = (
-                np.array([scene_tree.get_children(p) for p in board_game_stack])
-                .flatten()
-                .tolist()
-            )
-            nintendo_game_stack = scene_tree.get_children_recursive(
-                shelf, NintendoGameOrNull
-            )
-            nintendo_game_stack_objects = (
-                np.array([scene_tree.get_children(p) for p in nintendo_game_stack])
-                .flatten()
-                .tolist()
-            )
-            # Remove unobserved objects.
-            board_game_stack_objects = [
-                obj for obj in board_game_stack_objects if obj.observed
-            ]
-            nintendo_game_stack_objects = [
-                obj for obj in nintendo_game_stack_objects if obj.observed
-            ]
-            stack_objects = board_game_stack_objects + nintendo_game_stack_objects
-
-            # Get other objects.
-            other_objects = scene_tree.get_children_recursive(shelf)
-            object_stack_classes = (
-                LyingBalderdashBoardGame,
-                LyingClueBoardGame,
-                LyingMonopolyBoardGame,
-                LyingSlidersBoardGame,
-                NintendoGame,
-            )
-            other_objects = [
-                obj
-                for obj in other_objects
-                if not isinstance(obj, object_stack_classes) and obj.observed
-            ]
-
-            print("TEST", len(stack_objects), len(other_objects))
-            import IPython
-
-            IPython.embed()  # TODO: remove
-
-            if len(stack_objects) == 0 or len(other_objects) == 0:
-                # Constraint trivially satisfied.
-                return torch.tensor([1.0])
-
-            # Extract translations and keep out radii.
-            stack_translations = torch.stack(
-                [obj.translation[:2] for obj in stack_objects]
-            )
-            other_translations = torch.stack(
-                [other_obj.translation[:2] for other_obj in other_objects]
-            )
-            keep_out_radii = torch.tensor(
-                [other_obj.KEEP_OUT_RADIUS for other_obj in other_objects]
+            # Get all shelf layer nodes.
+            shelf_layers = scene_tree.get_children_recursive(
+                shelf, (TopShelfSettingOrLargeBoardGame, ShelfSettingOrLargeBoardGame)
             )
 
-            import IPython
+            # Process each shelf layer separately.
+            # Objects from different layers can't collide.
+            for layer in shelf_layers:
+                # Get all objects in this layer.
+                layer_objects = [
+                    obj
+                    for obj in scene_tree.get_children_recursive(layer)
+                    if obj.observed
+                ]
 
-            IPython.embed()  # TODO: remove
+                if not layer_objects:
+                    continue
 
-            # Compute the distance matrix between all pairs of objects and shared
-            # objects.
-            distances = torch.cdist(stack_translations, other_translations)
+                # Get stack objects in this layer.
+                object_stack_classes = (LyingBalderdashBoardGame, NintendoGame)
+                stack_objects = [
+                    obj
+                    for obj in layer_objects
+                    if isinstance(obj, object_stack_classes)
+                ]
 
-            # Negative if any object is within keep out radius of any shared object.
-            return torch.flatten(distances - keep_out_radii).unsqueeze(1)
+                if not stack_objects:
+                    continue
+
+                # Extract translations and keep out radii.
+                stack_translations = torch.stack(
+                    [stack_obj.translation[:2] for stack_obj in stack_objects]
+                )
+                layer_translations = torch.stack(
+                    [obj.translation[:2] for obj in layer_objects]
+                )
+                stack_keep_out_radii = torch.tensor(
+                    [stack_obj.KEEP_OUT_RADIUS for stack_obj in stack_objects]
+                )
+                layer_keep_out_radii = torch.tensor(
+                    [obj.KEEP_OUT_RADIUS for obj in layer_objects]
+                )
+
+                # Compute distances within this layer.
+                distances = torch.cdist(stack_translations, layer_translations)
+
+                # Create a mask to ignore self-distances.
+                mask = torch.ones_like(distances, dtype=torch.bool)
+                for i, stack_obj in enumerate(stack_objects):
+                    # Find the index of this stack object in layer_objects
+                    obj_idx = layer_objects.index(stack_obj)
+                    # Mask out the self-distance
+                    mask[i, obj_idx] = False
+
+                # Apply the mask by setting masked distances to a large value.
+                large_value = 1000.0  # Should be larger than any realistic distance
+                masked_distances = torch.where(mask, distances, large_value)
+
+                # Calculate minimum distances for this layer.
+                layer_min_distances = masked_distances - (
+                    stack_keep_out_radii.unsqueeze(1)
+                    + layer_keep_out_radii.unsqueeze(0)
+                ).expand(distances.shape)
+                min_distances.append(torch.flatten(layer_min_distances))
+
+        if not min_distances:
+            # If no objects to check, constraint is trivially satisfied.
+            return torch.tensor([1.0])
+
+        # Combine all minimum distances and return.
+        return torch.cat(min_distances).unsqueeze(1)
