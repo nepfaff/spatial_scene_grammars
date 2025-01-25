@@ -22,7 +22,7 @@ shelf_setting -> (bowl | null) | (plate | null) | (coke | null) | (tea_bottle | 
     (stacked_board_games | null) | (book | null) | (speaker | null) |
     (nintendo_game | null) | (stacking_ring | null) | (toy_train | null)
 
-plate -> toast | null
+plate -> toast | pear | apple | null
 stacked_board_games -> lying_board_game | null
 standing_board_games -> standing_board_game | null
 
@@ -31,6 +31,8 @@ standing_board_game -> standing_board_game | null
 
 big_bowl -> null
 toast -> null
+pear -> null
+apple -> null
 coke -> null
 tea_bottle -> null
 lamp -> null
@@ -288,7 +290,105 @@ class ShelfSetting(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=PlateOrNull,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
+
+
+class Plate(OrNode):
+    KEEP_OUT_RADIUS = 0.11
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/plates/carlisle_plate_mesh_collision.sdf",
+        )
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor(np.ones(4) / 4),
+            physics_geometry_info=geom,
+            observed=True,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=Toast,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, 0.021]),
+                    variance=torch.tensor([0.015**2, 0.015**2, 1e-16]),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Apple,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, 0.043]),
+                    variance=torch.tensor([0.01**2, 0.01**2, 1e-16]),
+                ),
+                rotation_rule=ARBITRARY_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Pear,
+                xyz_rule=ParentFrameGaussianOffsetRule(
+                    mean=torch.tensor([0.0, 0.0, 0.048]),
+                    variance=torch.tensor([0.001**2, 0.001**2, 1e-16]),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
+
+
+class PlateOrNull(OrNode):
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.tensor([0.2, 0.8]),
+            physics_geometry_info=None,
+            observed=False,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        rules = [
+            ProductionRule(
+                child_type=Plate,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor(
+                        [
+                            -Shelf.WIDTH / 2 + Plate.KEEP_OUT_RADIUS,
+                            -Shelf.LENGTH / 2 + Plate.KEEP_OUT_RADIUS,
+                            0.0,
+                        ]
+                    ),
+                    ub=torch.tensor(
+                        [
+                            Shelf.WIDTH / 2 - Plate.KEEP_OUT_RADIUS,
+                            Shelf.LENGTH / 2 - Plate.KEEP_OUT_RADIUS,
+                            0.001,
+                        ]
+                    ),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+        return rules
 
 
 class Lamp(TerminalNode):
@@ -359,7 +459,7 @@ class BigBowlOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.1, 0.9]),
+            rule_probs=torch.tensor([0.2, 0.8]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -419,7 +519,7 @@ class StandingEatToLiveBookOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.1, 0.9]),
+            rule_probs=torch.tensor([0.2, 0.8]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -482,7 +582,7 @@ class StackingRingOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.1, 0.9]),
+            rule_probs=torch.tensor([0.2, 0.8]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -545,7 +645,7 @@ class ToyTrainOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.1, 0.9]),
+            rule_probs=torch.tensor([0.2, 0.8]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -630,8 +730,8 @@ class NintendoGameOrNull(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.8, max_children=3, start_at_one=False
-            ),  # No game can with probability of ~0.8
+                p=0.7, max_children=3, start_at_one=False
+            ),  # No game can with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
         )
@@ -681,8 +781,8 @@ class CokeCanOrNull(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.8, max_children=6, start_at_one=False
-            ),  # No coke can with probability of ~0.8
+                p=0.7, max_children=6, start_at_one=False
+            ),  # No coke can with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
         )
@@ -732,8 +832,8 @@ class TeaBottleOrNull(RepeatingSetNode):
         super().__init__(
             tf=tf,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.8, max_children=6, start_at_one=False
-            ),  # No tea bottle with probability of ~0.8
+                p=0.7, max_children=6, start_at_one=False
+            ),  # No tea bottle with probability of ~0.7
             physics_geometry_info=None,
             observed=False,
         )
@@ -872,7 +972,7 @@ class StackedBoardGamesOrNull(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.05, 0.05, 0.9]),
+            rule_probs=torch.tensor([0.1, 0.1, 0.8]),
             physics_geometry_info=None,
             observed=False,
         )
@@ -1128,6 +1228,43 @@ class LyingSlidersBoardGame(OrNode):
         return rules
 
 
+class Toast(TerminalNode):
+    KEEP_OUT_RADIUS = 0.01 # Not measured
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/food/sandwich/fake_toasted_bread_slice_mesh_collision.sdf",
+        )
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=geom,
+            observed=True,
+        )
+
+
+class Apple(TerminalNode):
+    KEEP_OUT_RADIUS = 0.01 # Not measured
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/fruits/apples/gala_apple.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class Pear(TerminalNode):
+    KEEP_OUT_RADIUS = 0.01 # Not measured
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/fruits/pears/bose_pear.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
 class Null(TerminalNode):
     def __init__(self, tf):
         super().__init__(tf=tf, physics_geometry_info=None, observed=False)
@@ -1222,18 +1359,21 @@ class ObjectsNotInCollisionWithStacksConstraint(StructureConstraint):
             # Process each shelf layer separately.
             # Objects from different layers can't collide.
             for layer in shelf_layers:
+                # These will already be considered by the base stack object.
+                exclude_object_classes = (Apple, Pear, Toast)
+                
                 # Get all objects in this layer.
                 layer_objects = [
                     obj
                     for obj in scene_tree.get_children_recursive(layer)
-                    if obj.observed
+                    if obj.observed and not isinstance(obj, exclude_object_classes)
                 ]
 
                 if not layer_objects:
                     continue
 
                 # Get stack objects in this layer.
-                object_stack_classes = (LyingBalderdashBoardGame, NintendoGame)
+                object_stack_classes = (LyingBalderdashBoardGame, NintendoGame, Plate)
                 stack_objects = [
                     obj
                     for obj in layer_objects
