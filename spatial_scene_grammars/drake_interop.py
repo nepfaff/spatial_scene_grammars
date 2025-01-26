@@ -496,16 +496,24 @@ def compile_scene_tree_to_mbp_and_sg(
     if os.path.exists(anzu_package_path):
         package_file_abs_path = os.path.abspath(anzu_package_path)
         parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
-    else:
-        print("Anzu package not found.")
+    # else:
+    #     print("Anzu package not found.")
 
     # Add Gazebo package.
     gazebo_package_path = os.path.expanduser("gazebo/package.xml")
     if os.path.exists(gazebo_package_path):
         package_file_abs_path = os.path.abspath(gazebo_package_path)
         parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
-    else:
-        print("Gazebo package not found.")
+    # else:
+    #     print("Gazebo package not found.")
+
+    # Add Greg table package.
+    greg_table_package_path = os.path.expanduser("greg_table/package.xml")
+    if os.path.exists(greg_table_package_path):
+        package_file_abs_path = os.path.abspath(greg_table_package_path)
+        parser.package_map().Add("greg_table", os.path.dirname(package_file_abs_path))
+    # else:
+    #     print("Greg table package not found.")
 
     world_body = mbp.world_body()
 
@@ -516,11 +524,20 @@ def compile_scene_tree_to_mbp_and_sg(
         elif static_models.endswith(".sdf"):
             parser.AddModelsFromUrl(static_models)
             # TODO: Make this more general.
-            mbp.WeldFrames(
-                world_body.body_frame(),
-                mbp.GetBodyByName("shelves_body").body_frame(),
-                RigidTransform(p=[0.0, 0.0, 0.0]),
-            )
+            if static_models.endswith("shelves.sdf"):
+                mbp.WeldFrames(
+                    world_body.body_frame(),
+                    mbp.GetBodyByName("shelves_body").body_frame(),
+                    RigidTransform(p=[0.0, 0.0, 0.0]),
+                )
+            elif static_models.endswith("cafe_table/model.sdf"):
+                mbp.WeldFrames(
+                    world_body.body_frame(),
+                    mbp.GetBodyByName("cafe_table_body").body_frame(),
+                    RigidTransform(p=[0.0, 0.0, 0.0]),
+                )
+            else:
+                raise ValueError("Unknown static model: %s" % static_models)
 
     node_to_free_body_ids_map = {}
     body_id_to_node_map = {}
@@ -756,7 +773,6 @@ def project_tree_to_feasibility(
     # collision_dists = [p.distance for p in pairs]
     # import IPython; IPython.embed(); exit()
 
-    # TODO: This is suboptimal. Ideally, we don't include rotations in the decision variables!
     # If forward sim is requested, do a quick forward sim to get to
     # a statically stable config.
     if do_forward_sim:

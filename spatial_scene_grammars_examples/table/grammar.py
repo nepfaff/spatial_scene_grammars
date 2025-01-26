@@ -18,6 +18,16 @@ Table -> place settings and shared dishware
 Shared dishware -> Tea kettle, food plates, bamboo steamer towers
 Place settings - > cup, plate, chopsticks, chair?
 """
+ARBITRARY_YAW_ROTATION_RULE = (
+    ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+        RotationMatrix(), np.array([1e6, 1e6, 1])
+    )  # Bigger values = less variance
+)
+ARBITRARY_ROTATION_RULE = (
+    ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+        RotationMatrix(), np.array([1, 1, 1])
+    )
+)
 
 
 class PersonalPlate(TerminalNode):
@@ -27,7 +37,7 @@ class PersonalPlate(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/plates_cups_and_bowls/plates/Threshold_Bistro_Ceramic_Dinner_Plate_Ruby_Ring/model_simplified.sdf",
+            "package://greg_table/models/plates_cups_and_bowls/plates/Threshold_Bistro_Ceramic_Dinner_Plate_Ruby_Ring/model_simplified.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -40,7 +50,7 @@ class FirstChopstick(IndependentSetNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/misc/chopstick/model.sdf",
+            "package://greg_table/models/misc/chopstick/model.sdf",
         )
         super().__init__(
             tf=tf,
@@ -56,7 +66,7 @@ class FirstChopstick(IndependentSetNode):
                 child_type=SecondChopstick,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.0, 0.0, 0.0]),
-                    variance=torch.tensor([0.0001, 0.0001, 0.0001]),
+                    variance=torch.tensor([0.0001, 0.0001, 1e-16]),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
                     RotationMatrix(), np.array([1000, 1000, 1000])
@@ -71,7 +81,7 @@ class SecondChopstick(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/misc/chopstick/model.sdf",
+            "package://greg_table/models/misc/chopstick/model.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -83,7 +93,7 @@ class Teacup(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/plates_cups_and_bowls/cups/coffee_cup_white/model_simplified.sdf",
+            "package://greg_table/models/plates_cups_and_bowls/cups/coffee_cup_white/model_simplified.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -95,7 +105,7 @@ class Teapot(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/plates_cups_and_bowls/cups/Threshold_Porcelain_Teapot_White/model_simplified.sdf",
+            "package://greg_table/models/plates_cups_and_bowls/cups/Threshold_Porcelain_Teapot_White/model_simplified.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -107,7 +117,7 @@ class ServingDish(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/plates_cups_and_bowls/plates/Threshold_Dinner_Plate_Square_Rim_White_Porcelain/model_simplified.sdf",
+            "package://greg_table/models/plates_cups_and_bowls/plates/Threshold_Dinner_Plate_Square_Rim_White_Porcelain/model_simplified.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -124,7 +134,7 @@ class SteamerBottom(OrNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/misc/steamer_bottom/model.sdf",
+            "package://greg_table/models/misc/steamer_bottom/model.sdf",
         )
         super().__init__(
             tf=tf,
@@ -139,22 +149,18 @@ class SteamerBottom(OrNode):
             ProductionRule(
                 child_type=SteamerBottom,
                 xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.1]),
-                    variance=torch.tensor([0.0001, 0.0001, 0.0001]),
+                    mean=torch.tensor([0.0, 0.0, 0.091]),
+                    variance=torch.tensor([1e-16, 1e-16, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([10000, 10000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=SteamerTop,
                 xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.1]),
-                    variance=torch.tensor([0.0001, 0.0001, 0.0001]),
+                    mean=torch.tensor([0.0, 0.0, 0.091]),
+                    variance=torch.tensor([1e-16, 1e-16, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([10000, 10000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=Null,
@@ -172,7 +178,7 @@ class SteamerTop(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "models/misc/steamer_top/model.sdf",
+            "package://greg_table/models/misc/steamer_top/model.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -200,21 +206,17 @@ class PersonalPlateAndTeacup(AndNode):
                 child_type=PersonalPlate,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.001, 0.001, 0.0001]),
+                    variance=torch.tensor([0.001, 0.001, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=Teacup,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.25, 0.0, 0.00]),
-                    variance=torch.tensor([0.001, 0.005, 0.0001]),
+                    variance=torch.tensor([0.001, 0.005, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
         ]
         return rules
@@ -241,21 +243,17 @@ class PlaceSetting(OrNode):
                 child_type=PersonalPlate,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.001, 0.001, 0.0001]),
+                    variance=torch.tensor([0.001, 0.001, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=Teacup,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.25, 0.0, 0.00]),
-                    variance=torch.tensor([0.001, 0.005, 0.0001]),
+                    variance=torch.tensor([0.001, 0.005, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             ),
             ProductionRule(
                 child_type=Null,
@@ -349,11 +347,9 @@ class SharedDishes(RepeatingSetNode):
                 child_type=ServingDish,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.02, 0.02, 0.0001]),
+                    variance=torch.tensor([0.02, 0.02, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )
         ]
 
@@ -376,11 +372,9 @@ class SharedTeapots(RepeatingSetNode):
                 child_type=Teapot,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.01, 0.01, 0.0001]),
+                    variance=torch.tensor([0.01, 0.01, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )
         ]
 
@@ -403,11 +397,9 @@ class SharedSteamers(RepeatingSetNode):
                 child_type=SteamerBottom,
                 xyz_rule=ParentFrameGaussianOffsetRule(
                     mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.025, 0.025, 0.0001]),
+                    variance=torch.tensor([0.025, 0.025, 1e-16]),
                 ),
-                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(), np.array([1000, 1000, 1])
-                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )
         ]
 
@@ -443,27 +435,24 @@ class SharedStuff(IndependentSetNode):
 
 
 class Table(AndNode):
+    # package://greg_table/models/misc/cafe_table/model.sdf
     WIDTH = 1.25
 
     # Place settings + misc common dishware
     def __init__(self, tf):
-        geom = PhysicsGeometryInfo(fixed=True)
-        geom_tf = torch.eye(4)
-        geom_tf[2, 3] = -0.8
-        geom.register_model_file(geom_tf, "models/misc/cafe_table/model.sdf")
-        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+        super().__init__(tf=tf, physics_geometry_info=None, observed=False)
 
     @classmethod
     def generate_rules(cls):
         return [
             ProductionRule(
                 child_type=PlaceSettings,
-                xyz_rule=SamePositionRule(offset=torch.tensor([0.0, 0.0, 0.025])),
+                xyz_rule=SamePositionRule(offset=torch.tensor([0.0, 0.0, 0.0])),
                 rotation_rule=SameRotationRule(),
             ),
             ProductionRule(
                 child_type=SharedStuff,
-                xyz_rule=SamePositionRule(offset=torch.tensor([0.0, 0.0, 0.025])),
+                xyz_rule=SamePositionRule(offset=torch.tensor([0.0, 0.0, 0.0])),
                 rotation_rule=SameRotationRule(),
             ),
         ]
@@ -503,6 +492,56 @@ class ObjectsOnTableConstraint(PoseConstraint):
 
 
 class ObjectSpacingConstraint(PoseConstraint):
+    # Objects all a minimum distance apart on tabletop
+    def __init__(self):
+        lb = torch.tensor([0.0])
+        ub = torch.tensor([np.inf])
+        super().__init__(lower_bound=lb, upper_bound=ub)
+
+    def eval(self, scene_tree):
+        tables = scene_tree.find_nodes_by_type(Table)
+        all_dists = []
+        for table in tables:
+            objs = [
+                node
+                for node in scene_tree.get_children_recursive(table)
+                if isinstance(node, TabletopObjectTypes)
+                and not isinstance(
+                    scene_tree.get_parent(node), SteamerBottom
+                )  # Want stacked steamers to touch each other
+                and not isinstance(node, FirstChopstick)
+                and not isinstance(node, SecondChopstick)
+            ]
+            if len(objs) <= 1:
+                # print("no objects")
+                continue
+            xys = torch.stack([obj.translation[:2] for obj in objs], axis=0)
+            keepout_dists = torch.tensor([obj.KEEPOUT_RADIUS for obj in objs])
+            N = xys.shape[0]
+            xys_rowwise = xys.unsqueeze(1).expand(-1, N, -1)
+            keepout_dists_rowwise = keepout_dists.unsqueeze(1).expand(-1, N)
+            xys_colwise = xys.unsqueeze(0).expand(N, -1, -1)
+            keepout_dists_colwise = keepout_dists.unsqueeze(0).expand(N, -1)
+            dists = (xys_rowwise - xys_colwise).square().sum(axis=-1)
+            keepout_dists = keepout_dists_rowwise + keepout_dists_colwise
+
+            # Get only lower triangular non-diagonal elems
+            rows, cols = torch.tril_indices(N, N, -1)
+            # Make sure pairwise dists > keepout dists
+            dists = (dists - keepout_dists.square())[rows, cols].reshape(-1, 1)
+            all_dists.append(dists)
+        if len(all_dists) > 0:
+            return torch.cat(all_dists, axis=0)
+        else:
+            return torch.empty(size=(0, 1))
+
+    def add_to_ik_prog(
+        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
+    ):
+        raise NotImplementedError()
+
+
+class ObjectSpacingConstraintStructure(StructureConstraint):
     # Objects all a minimum distance apart on tabletop
     def __init__(self):
         lb = torch.tensor([0.0])

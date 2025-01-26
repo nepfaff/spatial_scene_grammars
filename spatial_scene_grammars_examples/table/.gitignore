@@ -1,2 +1,4 @@
 renders
 models
+*.pkl
+greg_table
