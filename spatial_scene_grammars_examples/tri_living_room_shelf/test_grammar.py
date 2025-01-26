@@ -124,8 +124,8 @@ constraint_list = [
     # Pick one of the following. The structure constraint is faster as its handled by
     # rejection sampling. The pose constraint is slower as it is handled by HMC but
     # allows for potentially higher clutter scenes.
-    ObjectsNotInCollisionWithStacksConstraintPose(),
-    # ObjectsNotInCollisionWithStacksConstraintStructure(),
+    # ObjectsNotInCollisionWithStacksConstraintPose(),
+    ObjectsNotInCollisionWithStacksConstraintStructure(),
 ]
 
 tree, _ = sample_realistic_scene(grammar, constraint_list)
