@@ -43,7 +43,8 @@ from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
     BoardGameStackHeightConstraint,
     LargeBoardGameStackHeightConstraint,
     MinNumObjectsConstraint,
-    ObjectsNotInCollisionWithStacksConstraint,
+    ObjectsNotInCollisionWithStacksConstraintPose,
+    ObjectsNotInCollisionWithStacksConstraintStructure,
     Shelf,
 )
 
@@ -279,7 +280,11 @@ def main():
         BoardGameStackHeightConstraint(max_height=5),
         LargeBoardGameStackHeightConstraint(max_height=3),
         MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
-        ObjectsNotInCollisionWithStacksConstraint(),
+        # Pick one of the following. The structure constraint is faster as its handled by
+        # rejection sampling. The pose constraint is slower as it is handled by HMC but
+        # allows for potentially higher clutter scenes.
+        # ObjectsNotInCollisionWithStacksConstraintPose(),
+        ObjectsNotInCollisionWithStacksConstraintStructure(),
     ]
 
     pool = Pool(processes=processes)

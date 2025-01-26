@@ -1229,7 +1229,8 @@ class LyingSlidersBoardGame(OrNode):
 
 
 class Toast(TerminalNode):
-    KEEP_OUT_RADIUS = 0.01 # Not measured
+    KEEP_OUT_RADIUS = 0.01  # Not measured
+
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
@@ -1244,7 +1245,8 @@ class Toast(TerminalNode):
 
 
 class Apple(TerminalNode):
-    KEEP_OUT_RADIUS = 0.01 # Not measured
+    KEEP_OUT_RADIUS = 0.01  # Not measured
+
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
@@ -1255,7 +1257,8 @@ class Apple(TerminalNode):
 
 
 class Pear(TerminalNode):
-    KEEP_OUT_RADIUS = 0.01 # Not measured
+    KEEP_OUT_RADIUS = 0.01  # Not measured
+
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
@@ -1340,88 +1343,99 @@ class LargeBoardGameStackHeightConstraint(StructureConstraint):
         return torch.tensor([tallest_stack])
 
 
-class ObjectsNotInCollisionWithStacksConstraint(StructureConstraint):
+def compute_objects_not_in_collision_with_stacks(scene_tree):
+    shelves = scene_tree.find_nodes_by_type(Shelf)
+    min_distances = []
+
+    for shelf in shelves:
+        # Get all shelf layer nodes.
+        shelf_layers = scene_tree.get_children_recursive(
+            shelf, (TopShelfSettingOrLargeBoardGame, ShelfSettingOrLargeBoardGame)
+        )
+
+        # Process each shelf layer separately.
+        # Objects from different layers can't collide.
+        for layer in shelf_layers:
+            # These will already be considered by the base stack object.
+            exclude_object_classes = (Apple, Pear, Toast)
+
+            # Get all objects in this layer.
+            layer_objects = [
+                obj
+                for obj in scene_tree.get_children_recursive(layer)
+                if obj.observed and not isinstance(obj, exclude_object_classes)
+            ]
+
+            if not layer_objects:
+                continue
+
+            # Get stack objects in this layer.
+            object_stack_classes = (LyingBalderdashBoardGame, NintendoGame, Plate)
+            stack_objects = [
+                obj for obj in layer_objects if isinstance(obj, object_stack_classes)
+            ]
+
+            if not stack_objects:
+                continue
+
+            # Extract translations and keep out radii.
+            stack_translations = torch.stack(
+                [stack_obj.translation[:2] for stack_obj in stack_objects]
+            )
+            layer_translations = torch.stack(
+                [obj.translation[:2] for obj in layer_objects]
+            )
+            stack_keep_out_radii = torch.tensor(
+                [stack_obj.KEEP_OUT_RADIUS for stack_obj in stack_objects]
+            )
+            layer_keep_out_radii = torch.tensor(
+                [obj.KEEP_OUT_RADIUS for obj in layer_objects]
+            )
+
+            # Compute distances within this layer.
+            distances = torch.cdist(stack_translations, layer_translations)
+
+            # Create a mask to ignore self-distances.
+            mask = torch.ones_like(distances, dtype=torch.bool)
+            for i, stack_obj in enumerate(stack_objects):
+                # Find the index of this stack object in layer_objects
+                obj_idx = layer_objects.index(stack_obj)
+                # Mask out the self-distance
+                mask[i, obj_idx] = False
+
+            # Apply the mask by setting masked distances to a large value.
+            large_value = 1000.0  # Should be larger than any realistic distance
+            masked_distances = torch.where(mask, distances, large_value)
+
+            # Calculate minimum distances for this layer.
+            layer_min_distances = masked_distances - (
+                stack_keep_out_radii.unsqueeze(1) + layer_keep_out_radii.unsqueeze(0)
+            ).expand(distances.shape)
+            min_distances.append(torch.flatten(layer_min_distances))
+
+    if not min_distances:
+        # If no objects to check, constraint is trivially satisfied.
+        return torch.tensor([1.0])
+
+    # Combine all minimum distances and return.
+    return torch.cat(min_distances).unsqueeze(1)
+
+
+class ObjectsNotInCollisionWithStacksConstraintPose(PoseConstraint):
     def __init__(self):
         super().__init__(
             lower_bound=torch.tensor([0.0]), upper_bound=torch.tensor([torch.inf])
         )
 
     def eval(self, scene_tree):
-        shelves = scene_tree.find_nodes_by_type(Shelf)
-        min_distances = []
+        return compute_objects_not_in_collision_with_stacks(scene_tree)
 
-        for shelf in shelves:
-            # Get all shelf layer nodes.
-            shelf_layers = scene_tree.get_children_recursive(
-                shelf, (TopShelfSettingOrLargeBoardGame, ShelfSettingOrLargeBoardGame)
-            )
 
-            # Process each shelf layer separately.
-            # Objects from different layers can't collide.
-            for layer in shelf_layers:
-                # These will already be considered by the base stack object.
-                exclude_object_classes = (Apple, Pear, Toast)
-                
-                # Get all objects in this layer.
-                layer_objects = [
-                    obj
-                    for obj in scene_tree.get_children_recursive(layer)
-                    if obj.observed and not isinstance(obj, exclude_object_classes)
-                ]
+class ObjectsNotInCollisionWithStacksConstraintStructure(StructureConstraint):
+    def __init__(self):
+        super().__init__(
+            lower_bound=torch.tensor([0.0]), upper_bound=torch.tensor([torch.inf])
+        )
 
-                if not layer_objects:
-                    continue
-
-                # Get stack objects in this layer.
-                object_stack_classes = (LyingBalderdashBoardGame, NintendoGame, Plate)
-                stack_objects = [
-                    obj
-                    for obj in layer_objects
-                    if isinstance(obj, object_stack_classes)
-                ]
-
-                if not stack_objects:
-                    continue
-
-                # Extract translations and keep out radii.
-                stack_translations = torch.stack(
-                    [stack_obj.translation[:2] for stack_obj in stack_objects]
-                )
-                layer_translations = torch.stack(
-                    [obj.translation[:2] for obj in layer_objects]
-                )
-                stack_keep_out_radii = torch.tensor(
-                    [stack_obj.KEEP_OUT_RADIUS for stack_obj in stack_objects]
-                )
-                layer_keep_out_radii = torch.tensor(
-                    [obj.KEEP_OUT_RADIUS for obj in layer_objects]
-                )
-
-                # Compute distances within this layer.
-                distances = torch.cdist(stack_translations, layer_translations)
-
-                # Create a mask to ignore self-distances.
-                mask = torch.ones_like(distances, dtype=torch.bool)
-                for i, stack_obj in enumerate(stack_objects):
-                    # Find the index of this stack object in layer_objects
-                    obj_idx = layer_objects.index(stack_obj)
-                    # Mask out the self-distance
-                    mask[i, obj_idx] = False
-
-                # Apply the mask by setting masked distances to a large value.
-                large_value = 1000.0  # Should be larger than any realistic distance
-                masked_distances = torch.where(mask, distances, large_value)
-
-                # Calculate minimum distances for this layer.
-                layer_min_distances = masked_distances - (
-                    stack_keep_out_radii.unsqueeze(1)
-                    + layer_keep_out_radii.unsqueeze(0)
-                ).expand(distances.shape)
-                min_distances.append(torch.flatten(layer_min_distances))
-
-        if not min_distances:
-            # If no objects to check, constraint is trivially satisfied.
-            return torch.tensor([1.0])
-
-        # Combine all minimum distances and return.
-        return torch.cat(min_distances).unsqueeze(1)
+    def eval(self, scene_tree):
+        return compute_objects_not_in_collision_with_stacks(scene_tree)
