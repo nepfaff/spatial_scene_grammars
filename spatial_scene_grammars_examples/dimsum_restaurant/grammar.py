@@ -19,11 +19,8 @@ Table -> place settings and shared dishware
 Shared dishware -> Tea kettle, food plates, bamboo steamer towers
 Place settings - > cup, plate, chopsticks, chair?
 
-# TODO: Start by spawning a single table to check if that works.
-# TODO: Use parallelism in test_grammar.py and visualize all successfull ones until termination (one per worker)
-# TODO: Add structure constraint to prevent tables from overlapping (also consider chairs)
-=> Can't sample otherwise
 # TODO: Need to add shelves
+# TODO: Add structure constraint for preventing collision between tables and shelves
 # TODO: Update greg_table on Anzu
 """
 ARBITRARY_YAW_ROTATION_RULE = (
@@ -158,6 +155,8 @@ TabletopObjectTypes = (
 
 
 class Chair(TerminalNode):
+    KEEPOUT_RADIUS = 0.35
+
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
@@ -238,8 +237,9 @@ class PlaceSetting(OrNode):
 
 class PlaceSettings(AndNode):
     DISTANCE_FROM_CENTER = 0.5
-    CHAIR_DISTANCE_FROM_CENTER = 1.2
-    CHAIR_YAW_VARIANCE = 100
+    CHAIR_DISTANCE_FROM_CENTER = 1.1
+    TABLE_HEIGHT = 0.785
+    CHAIR_YAW_VARIANCE = 50
 
     def __init__(self, tf):
         super().__init__(tf=tf, physics_geometry_info=None, observed=False)
@@ -261,11 +261,13 @@ class PlaceSettings(AndNode):
             ProductionRule(
                 child_type=Chair,
                 xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([-cls.CHAIR_DISTANCE_FROM_CENTER, 0.0, 0.0]),
-                    variance=torch.tensor([0.01, 0.1, 1e-16]),
+                    mean=torch.tensor(
+                        [-cls.CHAIR_DISTANCE_FROM_CENTER, 0.0, -cls.TABLE_HEIGHT]
+                    ),
+                    variance=torch.tensor([0.005, 0.03, 1e-16]),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(RollPitchYaw(0.0, 0.0, 0.0)),
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, -np.pi / 2)),
                     np.array([1e6, 1e6, cls.CHAIR_YAW_VARIANCE]),
                 ),
             ),
@@ -283,11 +285,13 @@ class PlaceSettings(AndNode):
             ProductionRule(
                 child_type=Chair,
                 xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([cls.CHAIR_DISTANCE_FROM_CENTER, 0.0, 0.0]),
-                    variance=torch.tensor([0.01, 0.1, 1e-16]),
+                    mean=torch.tensor(
+                        [cls.CHAIR_DISTANCE_FROM_CENTER, 0.0, -cls.TABLE_HEIGHT]
+                    ),
+                    variance=torch.tensor([0.005, 0.03, 1e-16]),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi)),
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2)),
                     np.array([1e6, 1e6, cls.CHAIR_YAW_VARIANCE]),
                 ),
             ),
@@ -305,11 +309,13 @@ class PlaceSettings(AndNode):
             ProductionRule(
                 child_type=Chair,
                 xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, cls.DISTANCE_FROM_CENTER, 0.0]),
-                    variance=torch.tensor([0.01, 0.1, 1e-16]),
+                    mean=torch.tensor(
+                        [0.0, cls.CHAIR_DISTANCE_FROM_CENTER, -cls.TABLE_HEIGHT]
+                    ),
+                    variance=torch.tensor([0.005, 0.03, 1e-16]),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(RollPitchYaw(0.0, 0.0, -np.pi / 2.0)),
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi)),
                     np.array([1e6, 1e6, cls.CHAIR_YAW_VARIANCE]),
                 ),
             ),
@@ -327,11 +333,13 @@ class PlaceSettings(AndNode):
             ProductionRule(
                 child_type=Chair,
                 xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, -cls.DISTANCE_FROM_CENTER, 0.0]),
-                    variance=torch.tensor([0.01, 0.1, 1e-16]),
+                    mean=torch.tensor(
+                        [0.0, -cls.CHAIR_DISTANCE_FROM_CENTER, -cls.TABLE_HEIGHT]
+                    ),
+                    variance=torch.tensor([0.005, 0.03, 1e-16]),
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-                    RotationMatrix(RollPitchYaw(0.0, 0.0, np.pi / 2.0)),
+                    RotationMatrix(RollPitchYaw(0.0, 0.0, 0.0)),
                     np.array([1e6, 1e6, cls.CHAIR_YAW_VARIANCE]),
                 ),
             ),
@@ -445,6 +453,7 @@ class SharedStuff(IndependentSetNode):
 
 class Table(AndNode):
     WIDTH = 1.25
+    KEEPOUT_RADIUS = 0.8
 
     # Place settings + misc common dishware
     def __init__(self, tf):
@@ -495,7 +504,7 @@ class Restaurant(RepeatingSetNode):
             ProductionRule(
                 child_type=Table,
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
-                    torch.tensor([-4.0, -4.0, 0.0]), torch.tensor([4.0, 4.0, 0.0])
+                    torch.tensor([-3.0, -3.0, 0.0]), torch.tensor([3.0, 3.0, 0.0])
                 ),
                 rotation_rule=UniformBoundedRevoluteJointRule(
                     axis=torch.tensor([0.0, 0.0, 1.0]),
@@ -612,19 +621,181 @@ class TallStackConstraint(StructureConstraint):
 
 
 class NumStacksConstraint(StructureConstraint):
-    # At least 6 stacks across the entire restaurant.
+    # Each table must have at least 2 stacks.
+    MIN_STACKS = 2
+
     def __init__(self):
-        lb = torch.tensor([6.0])
+        lb = torch.tensor(
+            [0.0]
+        )  # Lower bound is 0 since we'll check each table individually
         ub = torch.tensor([np.inf])
         super().__init__(lower_bound=lb, upper_bound=ub)
 
     def eval(self, scene_tree):
-        # Find all SharedSteamers nodes across all tables in the restaurant
-        shared_steamers_nodes = scene_tree.find_nodes_by_type(SharedSteamers)
+        # Find all tables in the restaurant
+        tables = scene_tree.find_nodes_by_type(Table)
 
-        # Count total stacks across all tables
-        total_stacks = 0
-        for shared_steamers in shared_steamers_nodes:
-            total_stacks += len(list(scene_tree.successors(shared_steamers)))
+        # If there are no tables, return a failing constraint value
+        if len(tables) == 0:
+            return torch.tensor([-1.0])
 
-        return torch.tensor([float(total_stacks)])
+        # Check each table for sufficient stacks
+        all_margins = []
+
+        for table in tables:
+            # Find SharedSteamers nodes for this specific table
+            shared_steamers_nodes = [
+                node
+                for node in scene_tree.get_children_recursive(table)
+                if isinstance(node, SharedSteamers)
+            ]
+
+            # Count stacks for this table
+            table_stacks = 0
+            for shared_steamers in shared_steamers_nodes:
+                table_stacks += len(list(scene_tree.successors(shared_steamers)))
+
+            # Calculate how many stacks above/below the required minimum
+            # Positive value means constraint is satisfied
+            margin = table_stacks - self.MIN_STACKS
+            all_margins.append(margin)
+
+        # Return all margins as a tensor
+        return torch.tensor(all_margins).reshape(-1, 1)
+
+    def add_to_ik_prog(
+        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
+    ):
+        raise NotImplementedError()
+
+
+class TablesAndChairsNotInCollisionConstraint(StructureConstraint):
+    # Ensures that tables and chairs from different table groups don't collide
+    def __init__(self):
+        # Constraint is satisfied when all distances are positive
+        super().__init__(
+            lower_bound=torch.tensor([0.0]), upper_bound=torch.tensor([torch.inf])
+        )
+
+    def eval(self, scene_tree):
+        tables = scene_tree.find_nodes_by_type(Table)
+
+        # If there's only one table or no tables, constraint is trivially satisfied
+        if len(tables) <= 1:
+            return torch.tensor([1.0])
+
+        all_margins = []
+
+        # Compare each table with every other table
+        for i, table1 in enumerate(tables):
+            # Get table position and keepout radius
+            table1_pos = table1.translation[:2]
+            table1_radius = table1.KEEPOUT_RADIUS
+
+            # Get chairs associated with this table
+            table1_chairs = [
+                obj
+                for obj in scene_tree.get_children_recursive(table1)
+                if isinstance(obj, Chair) and obj.observed
+            ]
+
+            # Extract chair positions and radii if there are any
+            if table1_chairs:
+                chair1_positions = torch.stack(
+                    [chair.translation[:2] for chair in table1_chairs]
+                )
+                chair1_radii = torch.tensor(
+                    [chair.KEEPOUT_RADIUS for chair in table1_chairs]
+                )
+
+            # Compare with all other tables
+            for j in range(i + 1, len(tables)):
+                table2 = tables[j]
+                table2_pos = table2.translation[:2]
+                table2_radius = table2.KEEPOUT_RADIUS
+
+                # Table-to-table distance check
+                table_distance = torch.norm(table1_pos - table2_pos)
+                table_margin = table_distance - (table1_radius + table2_radius)
+                all_margins.append(table_margin.reshape(1))
+
+                # Get chairs associated with the second table
+                table2_chairs = [
+                    obj
+                    for obj in scene_tree.get_children_recursive(table2)
+                    if isinstance(obj, Chair) and obj.observed
+                ]
+
+                if table2_chairs:
+                    chair2_positions = torch.stack(
+                        [chair.translation[:2] for chair in table2_chairs]
+                    )
+                    chair2_radii = torch.tensor(
+                        [chair.KEEPOUT_RADIUS for chair in table2_chairs]
+                    )
+
+                # Check chair-to-chair distances
+                if table1_chairs and table2_chairs:
+                    chair_distances = torch.cdist(chair1_positions, chair2_positions)
+                    # Create matrices of radii for each pair
+                    chair1_radii_matrix = chair1_radii.unsqueeze(1).expand(
+                        -1, len(chair2_radii)
+                    )
+                    chair2_radii_matrix = chair2_radii.unsqueeze(0).expand(
+                        len(chair1_radii), -1
+                    )
+                    # Calculate margins
+                    chair_margins = chair_distances - (
+                        chair1_radii_matrix + chair2_radii_matrix
+                    )
+                    all_margins.append(chair_margins.flatten())
+
+                # Check table1 to chair2 distances
+                if table2_chairs:
+                    t1_c2_distances = torch.norm(
+                        chair2_positions - table1_pos.unsqueeze(0), dim=1
+                    )
+                    t1_c2_margins = t1_c2_distances - (table1_radius + chair2_radii)
+                    all_margins.append(t1_c2_margins)
+
+                # Check table2 to chair1 distances
+                if table1_chairs:
+                    t2_c1_distances = torch.norm(
+                        chair1_positions - table2_pos.unsqueeze(0), dim=1
+                    )
+                    t2_c1_margins = t2_c1_distances - (table2_radius + chair1_radii)
+                    all_margins.append(t2_c1_margins)
+
+        # If we have any margins to check, return them all
+        if all_margins:
+            return torch.cat(all_margins).unsqueeze(1)
+        else:
+            # If no comparisons were made, constraint is trivially satisfied
+            return torch.tensor([1.0])
+
+    def add_to_ik_prog(
+        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
+    ):
+        raise NotImplementedError()
+
+
+class MinimumTablesConstraint(StructureConstraint):
+    # Ensures that the restaurant has at least a minimum number of tables
+    def __init__(self, min_tables=3):
+        super().__init__(
+            lower_bound=torch.tensor([float(min_tables)]),
+            upper_bound=torch.tensor([torch.inf]),
+        )
+        self.min_tables = min_tables
+
+    def eval(self, scene_tree):
+        # Find all tables in the scene
+        tables = scene_tree.find_nodes_by_type(Table)
+
+        # Return the count of tables as a tensor
+        return torch.tensor([float(len(tables))])
+
+    def add_to_ik_prog(
+        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
+    ):
+        raise NotImplementedError()

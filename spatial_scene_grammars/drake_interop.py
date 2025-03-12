@@ -777,7 +777,6 @@ def project_tree_to_feasibility(
     # a statically stable config.
     if do_forward_sim:
         sim = Simulator(diagram, diagram_context)
-        sim.set_target_realtime_rate(1000.0)
 
         try:
             sim.AdvanceTo(T)
