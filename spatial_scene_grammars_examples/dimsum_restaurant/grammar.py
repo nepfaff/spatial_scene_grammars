@@ -12,9 +12,10 @@ from spatial_scene_grammars.drake_interop import *
 from spatial_scene_grammars.nodes import *
 from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.scene_grammar import *
+from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import Shelf
 
 """
-Restaurant -> table (1-10)
+Restaurant -> table (1-10) & shelf (0-3)
 Table -> place settings and shared dishware
 Shared dishware -> Tea kettle, food plates, bamboo steamer towers
 Place settings - > cup, plate, chopsticks, chair?
@@ -461,7 +462,6 @@ class Table(AndNode):
 
         geom = PhysicsGeometryInfo(fixed=True)
         geom_tf = torch.eye(4)
-        # geom_tf[2, 3] = -0.8
         geom.register_model_file(
             geom_tf, "package://greg_table/models/misc/cafe_table/model.sdf"
         )
@@ -483,16 +483,12 @@ class Table(AndNode):
         ]
 
 
-class Restaurant(RepeatingSetNode):
+class Tables(RepeatingSetNode):
     def __init__(self, tf):
-        geom = PhysicsGeometryInfo(fixed=True)
-        geom.register_model_file(
-            torch.eye(4), "package://greg_table/models/misc/floor/model.sdf"
-        )
         super().__init__(
             tf=tf,
-            physics_geometry_info=geom,
-            observed=True,
+            physics_geometry_info=None,
+            observed=False,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
                 p=0.25, max_children=10, start_at_one=True
             ),
@@ -512,6 +508,55 @@ class Restaurant(RepeatingSetNode):
                     width=torch.tensor([2.0 * np.pi]),
                 ),
             )
+        ]
+
+
+class Shelves(RepeatingSetNode):
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=None,
+            observed=False,
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.25, max_children=3, start_at_one=False
+            ),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=Shelf,
+                # TODO: Need to adjust such that only get spawned at walls
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    torch.tensor([-3.0, -3.0, 0.0]), torch.tensor([3.0, 3.0, 0.0])
+                ),
+                rotation_rule=SameRotationRule(),
+            )
+        ]
+
+
+class Restaurant(AndNode):
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=True)
+        geom.register_model_file(
+            torch.eye(4), "package://greg_table/models/misc/floor/model.sdf"
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=Tables,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Shelves,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
         ]
 
 

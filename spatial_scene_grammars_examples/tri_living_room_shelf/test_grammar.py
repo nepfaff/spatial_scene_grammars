@@ -104,7 +104,6 @@ def sample_realistic_scene(
         do_forward_sim=True,
         timestep=0.001,
         T=2.5,
-        static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
     # feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
@@ -188,14 +187,6 @@ parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
 # Add Gazebo package.
 package_file_abs_path = os.path.abspath(os.path.expanduser("gazebo/package.xml"))
 parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
-
-# Add static models.
-parser.AddModelsFromUrl("package://drake_models/manipulation_station/shelves.sdf")
-plant.WeldFrames(
-    plant.world_frame(),
-    plant.GetBodyByName("shelves_body").body_frame(),
-    RigidTransform(p=[0.0, 0.0, 0.0]),
-)
 
 # Add scene models.
 for obj in scene:

@@ -81,8 +81,11 @@ class Shelf(AndNode):
     TOP_OFFSET = 0.4075
 
     def __init__(self, tf):
-        # NOTE: Static shelf geometry is added at simulation time using a welded
-        # directive.
+        geom = PhysicsGeometryInfo(fixed=True)
+        geom_tf = torch.eye(4)
+        geom.register_model_file(
+            geom_tf, "package://drake_models/manipulation_station/shelves.sdf"
+        )
         super().__init__(tf=tf, physics_geometry_info=None, observed=False)
 
     @classmethod

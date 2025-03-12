@@ -225,7 +225,6 @@ def sample_realistic_scene(
         do_forward_sim=True,
         timestep=0.001,
         T=2.5,
-        static_models="package://drake_models/manipulation_station/shelves.sdf",
     )
     return feasible_tree, good_tree
 
