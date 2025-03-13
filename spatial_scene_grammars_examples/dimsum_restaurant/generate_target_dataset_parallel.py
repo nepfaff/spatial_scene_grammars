@@ -20,11 +20,9 @@ import pickle
 import warnings
 from copy import deepcopy
 from datetime import timedelta
-from functools import partial
 from typing import List
 
 import numpy as np
-from scipy.spatial.transform import Rotation as rot
 from tqdm import tqdm
 
 import spatial_scene_grammars_examples
@@ -39,13 +37,18 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
+from spatial_scene_grammars_examples.dimsum_restaurant.grammar import (
+    ObjectOnTableSpacingConstraint,
+    ObjectsOnTableConstraint,
+    Restaurant,
+    TallStackConstraint,
+    TablesChairsAndShelvesNotInCollisionConstraint,
+)
 from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
     BoardGameStackHeightConstraint,
     LargeBoardGameStackHeightConstraint,
     MinNumObjectsConstraint,
-    ObjectsNotInCollisionWithStacksConstraintPose,
     ObjectsNotInCollisionWithStacksConstraintStructure,
-    Shelf,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -91,8 +94,8 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
         for node in observed_nodes:
             translation = np.array(node.translation)
 
-            # Remove nodes with translation above 5m in any direction.
-            if np.any(np.abs(translation) > 5):
+            # Remove nodes with translation above 8m in any direction.
+            if np.any(np.abs(translation) > 8):
                 continue
 
             objects = (
@@ -115,8 +118,8 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
 
             filtered_nodes.append(node)
 
-        # Keep all scenes with more than 3 objects.
-        if len(filtered_nodes) >= 3:
+        # Keep all scenes with more than 5 objects.
+        if len(filtered_nodes) >= 5:
             filtered_observed_nodes = filtered_nodes
         else:
             return None
@@ -172,7 +175,7 @@ def sample_realistic_scene(
     structure_constraints, pose_constraints = split_constraints(constraints)
     if len(structure_constraints) > 0:
         tree, success = rejection_sample_under_constraints(
-            grammar, structure_constraints, 1000, detach=True, verbose=-1
+            grammar, structure_constraints, 5000, detach=True, verbose=-1
         )
         if not success:
             return None, None
@@ -272,17 +275,19 @@ def main():
     start = time.time()
 
     grammar = SpatialSceneGrammar(
-        root_node_type=Shelf,
+        root_node_type=Restaurant,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraint_list = [
+        # Restaurant and table constraints.
+        TallStackConstraint(),
+        ObjectOnTableSpacingConstraint(),
+        ObjectsOnTableConstraint(),
+        TablesChairsAndShelvesNotInCollisionConstraint(),
+        # Shelf constraints.
         BoardGameStackHeightConstraint(max_height=5),
         LargeBoardGameStackHeightConstraint(max_height=3),
-        MinNumObjectsConstraint(min_num_objects=3, table_node_type=Shelf),
-        # Pick one of the following. The structure constraint is faster as its handled by
-        # rejection sampling. The pose constraint is slower as it is handled by HMC but
-        # allows for potentially higher clutter scenes.
-        # ObjectsNotInCollisionWithStacksConstraintPose(),
+        MinNumObjectsConstraint(min_num_objects=3),
         ObjectsNotInCollisionWithStacksConstraintStructure(),
     ]
 
