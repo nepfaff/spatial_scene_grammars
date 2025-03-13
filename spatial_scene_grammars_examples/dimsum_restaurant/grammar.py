@@ -100,7 +100,7 @@ class SteamerBottom(OrNode):
         )
         super().__init__(
             tf=tf,
-            rule_probs=torch.tensor([0.25, 0.4, 0.35]),
+            rule_probs=torch.tensor([0.3, 0.4, 0.3]),
             physics_geometry_info=geom,
             observed=True,
         )
@@ -399,11 +399,21 @@ class SharedTeapots(RepeatingSetNode):
 
 class SharedSteamers(RepeatingSetNode):
     def __init__(self, tf):
+        # Create a custom distribution that starts at 2 steamers
+        rule_probs = torch.zeros(5)  # For 0 to 4 steamers
+        rule_probs[0:2] = 0.0  # Zero probability for 0 or 1 steamer
+
+        # Geometric distribution starting at 2
+        p = 0.2
+        for k in range(2, 5):
+            rule_probs[k] = (1 - p) ** (k - 2) * p
+
+        # Normalize to sum to 1
+        rule_probs = rule_probs / torch.sum(rule_probs)
+
         super().__init__(
             tf=tf,
-            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.6, max_children=4, start_at_one=True
-            ),
+            rule_probs=rule_probs,
             physics_geometry_info=None,
             observed=False,
         )
@@ -485,13 +495,20 @@ class Table(AndNode):
 
 class Tables(RepeatingSetNode):
     def __init__(self, tf):
+        # Create a custom distribution that starts at 3 tables
+        rule_probs = torch.zeros(11)  # For 0 to 10 tables
+        rule_probs[0:3] = 0.0  # Zero probability for 0, 1, or 2 tables
+
+        # Geometric distribution starting at 3
+        p = 0.3  # Lower value = higher probability of more tables
+        for k in range(3, 11):
+            rule_probs[k] = (1 - p) ** (k - 3) * p
+
+        # Normalize to sum to 1
+        rule_probs = rule_probs / torch.sum(rule_probs)
+
         super().__init__(
-            tf=tf,
-            physics_geometry_info=None,
-            observed=False,
-            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.25, max_children=10, start_at_one=True
-            ),
+            tf=tf, physics_geometry_info=None, observed=False, rule_probs=rule_probs
         )
 
     @classmethod
@@ -500,7 +517,7 @@ class Tables(RepeatingSetNode):
             ProductionRule(
                 child_type=Table,
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
-                    torch.tensor([-3.0, -3.0, 0.0]), torch.tensor([3.0, 3.0, 0.0])
+                    torch.tensor([-2.5, -3.0, 0.0]), torch.tensor([3.0, 3.0, 0.0])
                 ),
                 rotation_rule=UniformBoundedRevoluteJointRule(
                     axis=torch.tensor([0.0, 0.0, 1.0]),
@@ -518,7 +535,7 @@ class Shelves(RepeatingSetNode):
             physics_geometry_info=None,
             observed=False,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.25, max_children=3, start_at_one=False
+                p=0.2, max_children=5, start_at_one=False
             ),
         )
 
@@ -527,9 +544,9 @@ class Shelves(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=Shelf,
-                # TODO: Need to adjust such that only get spawned at walls
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
-                    torch.tensor([-3.0, -3.0, 0.0]), torch.tensor([3.0, 3.0, 0.0])
+                    torch.tensor([-4.7501, -3.0, -0.3881]),
+                    torch.tensor([-4.75, 3.0, -0.388]),
                 ),
                 rotation_rule=SameRotationRule(),
             )
@@ -603,6 +620,7 @@ class ObjectOnTableSpacingConstraint(PoseConstraint):
     def eval(self, scene_tree):
         tables = scene_tree.find_nodes_by_type(Table)
         all_dists = []
+
         for table in tables:
             objs = [
                 node
@@ -613,24 +631,30 @@ class ObjectOnTableSpacingConstraint(PoseConstraint):
                 )  # Want stacked steamers to touch each other
                 and not isinstance(node, Chair)
             ]
+
             if len(objs) <= 1:
-                # print("no objects")
                 continue
+
+            # Vectorize computation
             xys = torch.stack([obj.translation[:2] for obj in objs], axis=0)
             keepout_dists = torch.tensor([obj.KEEPOUT_RADIUS for obj in objs])
-            N = xys.shape[0]
-            xys_rowwise = xys.unsqueeze(1).expand(-1, N, -1)
-            keepout_dists_rowwise = keepout_dists.unsqueeze(1).expand(-1, N)
-            xys_colwise = xys.unsqueeze(0).expand(N, -1, -1)
-            keepout_dists_colwise = keepout_dists.unsqueeze(0).expand(N, -1)
-            dists = (xys_rowwise - xys_colwise).square().sum(axis=-1)
-            keepout_dists = keepout_dists_rowwise + keepout_dists_colwise
 
-            # Get only lower triangular non-diagonal elems
+            # Compute all pairwise distances at once
+            dists = torch.cdist(xys, xys)
+
+            # Create matrices of radii for each pair
+            keepout_matrix1 = keepout_dists.unsqueeze(1).expand(-1, len(keepout_dists))
+            keepout_matrix2 = keepout_dists.unsqueeze(0).expand(len(keepout_dists), -1)
+            keepout_sum = keepout_matrix1 + keepout_matrix2
+
+            # Calculate margins
+            margins = dists - keepout_sum
+
+            # Get only lower triangular non-diagonal elements
+            N = xys.shape[0]
             rows, cols = torch.tril_indices(N, N, -1)
-            # Make sure pairwise dists > keepout dists
-            dists = (dists - keepout_dists.square())[rows, cols].reshape(-1, 1)
-            all_dists.append(dists)
+            all_dists.append(margins[rows, cols].reshape(-1, 1))
+
         if len(all_dists) > 0:
             return torch.cat(all_dists, axis=0)
         else:
@@ -643,9 +667,9 @@ class ObjectOnTableSpacingConstraint(PoseConstraint):
 
 
 class TallStackConstraint(StructureConstraint):
-    # The largest stack of steamers is at least 4 steamers tall.
+    # The largest stack of steamers is at least 3 steamers tall.
     def __init__(self):
-        lb = torch.tensor([4.0])
+        lb = torch.tensor([3.0])
         ub = torch.tensor([np.inf])
         super().__init__(lower_bound=lb, upper_bound=ub)
 
@@ -665,180 +689,124 @@ class TallStackConstraint(StructureConstraint):
         return torch.tensor([tallest_stack])
 
 
-class NumStacksConstraint(StructureConstraint):
-    # Each table must have at least 2 stacks.
-    MIN_STACKS = 2
-
-    def __init__(self):
-        lb = torch.tensor(
-            [0.0]
-        )  # Lower bound is 0 since we'll check each table individually
-        ub = torch.tensor([np.inf])
-        super().__init__(lower_bound=lb, upper_bound=ub)
-
-    def eval(self, scene_tree):
-        # Find all tables in the restaurant
-        tables = scene_tree.find_nodes_by_type(Table)
-
-        # If there are no tables, return a failing constraint value
-        if len(tables) == 0:
-            return torch.tensor([-1.0])
-
-        # Check each table for sufficient stacks
-        all_margins = []
-
-        for table in tables:
-            # Find SharedSteamers nodes for this specific table
-            shared_steamers_nodes = [
-                node
-                for node in scene_tree.get_children_recursive(table)
-                if isinstance(node, SharedSteamers)
-            ]
-
-            # Count stacks for this table
-            table_stacks = 0
-            for shared_steamers in shared_steamers_nodes:
-                table_stacks += len(list(scene_tree.successors(shared_steamers)))
-
-            # Calculate how many stacks above/below the required minimum
-            # Positive value means constraint is satisfied
-            margin = table_stacks - self.MIN_STACKS
-            all_margins.append(margin)
-
-        # Return all margins as a tensor
-        return torch.tensor(all_margins).reshape(-1, 1)
-
-    def add_to_ik_prog(
-        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
-    ):
-        raise NotImplementedError()
-
-
-class TablesAndChairsNotInCollisionConstraint(StructureConstraint):
-    # Ensures that tables and chairs from different table groups don't collide
-    def __init__(self):
+class TablesChairsAndShelvesNotInCollisionConstraint(StructureConstraint):
+    # Ensures that tables, chairs, and shelves don't collide with each other
+    def __init__(self, debug=False):
         # Constraint is satisfied when all distances are positive
+        self.debug = debug
         super().__init__(
             lower_bound=torch.tensor([0.0]), upper_bound=torch.tensor([torch.inf])
         )
 
     def eval(self, scene_tree):
         tables = scene_tree.find_nodes_by_type(Table)
+        shelves = scene_tree.find_nodes_by_type(Shelf)
 
-        # If there's only one table or no tables, constraint is trivially satisfied
-        if len(tables) <= 1:
+        # If there are no objects to check, constraint is trivially satisfied
+        if len(tables) + len(shelves) <= 1:
+            if self.debug:
+                print("No tables/shelves to check for collisions")
             return torch.tensor([1.0])
 
-        all_margins = []
+        # Collect all objects with positions, radii, and parent info
+        objects = []
+        table_to_index = {}  # Map tables to their index in objects list
 
-        # Compare each table with every other table
-        for i, table1 in enumerate(tables):
-            # Get table position and keepout radius
-            table1_pos = table1.translation[:2]
-            table1_radius = table1.KEEPOUT_RADIUS
+        for i, table in enumerate(tables):
+            table_idx = len(objects)
+            table_to_index[table] = table_idx
+            objects.append((table.translation[:2], table.KEEPOUT_RADIUS, "table", None))
 
             # Get chairs associated with this table
-            table1_chairs = [
+            table_chairs = [
                 obj
-                for obj in scene_tree.get_children_recursive(table1)
+                for obj in scene_tree.get_children_recursive(table)
                 if isinstance(obj, Chair) and obj.observed
             ]
 
-            # Extract chair positions and radii if there are any
-            if table1_chairs:
-                chair1_positions = torch.stack(
-                    [chair.translation[:2] for chair in table1_chairs]
-                )
-                chair1_radii = torch.tensor(
-                    [chair.KEEPOUT_RADIUS for chair in table1_chairs]
+            for chair in table_chairs:
+                objects.append(
+                    (chair.translation[:2], chair.KEEPOUT_RADIUS, "chair", table_idx)
                 )
 
-            # Compare with all other tables
-            for j in range(i + 1, len(tables)):
-                table2 = tables[j]
-                table2_pos = table2.translation[:2]
-                table2_radius = table2.KEEPOUT_RADIUS
+        for shelf in shelves:
+            objects.append((shelf.translation[:2], shelf.KEEPOUT_RADIUS, "shelf", None))
 
-                # Table-to-table distance check
-                table_distance = torch.norm(table1_pos - table2_pos)
-                table_margin = table_distance - (table1_radius + table2_radius)
-                all_margins.append(table_margin.reshape(1))
-
-                # Get chairs associated with the second table
-                table2_chairs = [
-                    obj
-                    for obj in scene_tree.get_children_recursive(table2)
-                    if isinstance(obj, Chair) and obj.observed
-                ]
-
-                if table2_chairs:
-                    chair2_positions = torch.stack(
-                        [chair.translation[:2] for chair in table2_chairs]
-                    )
-                    chair2_radii = torch.tensor(
-                        [chair.KEEPOUT_RADIUS for chair in table2_chairs]
-                    )
-
-                # Check chair-to-chair distances
-                if table1_chairs and table2_chairs:
-                    chair_distances = torch.cdist(chair1_positions, chair2_positions)
-                    # Create matrices of radii for each pair
-                    chair1_radii_matrix = chair1_radii.unsqueeze(1).expand(
-                        -1, len(chair2_radii)
-                    )
-                    chair2_radii_matrix = chair2_radii.unsqueeze(0).expand(
-                        len(chair1_radii), -1
-                    )
-                    # Calculate margins
-                    chair_margins = chair_distances - (
-                        chair1_radii_matrix + chair2_radii_matrix
-                    )
-                    all_margins.append(chair_margins.flatten())
-
-                # Check table1 to chair2 distances
-                if table2_chairs:
-                    t1_c2_distances = torch.norm(
-                        chair2_positions - table1_pos.unsqueeze(0), dim=1
-                    )
-                    t1_c2_margins = t1_c2_distances - (table1_radius + chair2_radii)
-                    all_margins.append(t1_c2_margins)
-
-                # Check table2 to chair1 distances
-                if table1_chairs:
-                    t2_c1_distances = torch.norm(
-                        chair1_positions - table2_pos.unsqueeze(0), dim=1
-                    )
-                    t2_c1_margins = t2_c1_distances - (table2_radius + chair1_radii)
-                    all_margins.append(t2_c1_margins)
-
-        # If we have any margins to check, return them all
-        if all_margins:
-            return torch.cat(all_margins).unsqueeze(1)
-        else:
-            # If no comparisons were made, constraint is trivially satisfied
+        # If no objects, return trivially satisfied constraint
+        if len(objects) <= 1:
+            if self.debug:
+                print("Only one object to check")
             return torch.tensor([1.0])
 
-    def add_to_ik_prog(
-        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
-    ):
-        raise NotImplementedError()
+        # Create tensors for vectorized computation
+        positions = torch.stack([obj[0] for obj in objects])
+        radii = torch.tensor([obj[1] for obj in objects])
+        types = [obj[2] for obj in objects]
+        parent_indices = [obj[3] for obj in objects]
 
+        # Compute all pairwise distances at once
+        distances = torch.cdist(positions, positions)
 
-class MinimumTablesConstraint(StructureConstraint):
-    # Ensures that the restaurant has at least a minimum number of tables
-    def __init__(self, min_tables=3):
-        super().__init__(
-            lower_bound=torch.tensor([float(min_tables)]),
-            upper_bound=torch.tensor([torch.inf]),
-        )
-        self.min_tables = min_tables
+        # Create matrices of radii for each pair
+        radii_matrix1 = radii.unsqueeze(1).expand(-1, len(radii))
+        radii_matrix2 = radii.unsqueeze(0).expand(len(radii), -1)
 
-    def eval(self, scene_tree):
-        # Find all tables in the scene
-        tables = scene_tree.find_nodes_by_type(Table)
+        # Calculate margins
+        margins = distances - (radii_matrix1 + radii_matrix2)
 
-        # Return the count of tables as a tensor
-        return torch.tensor([float(len(tables))])
+        # Get only lower triangular non-diagonal elements (to avoid self-comparisons)
+        n = len(objects)
+        rows, cols = torch.tril_indices(n, n, -1)
+
+        # Filter out chair-table pairs where the chair belongs to that table
+        valid_pairs = []
+        for i, j in zip(rows.tolist(), cols.tolist()):
+            # Skip chair-table comparisons where chair belongs to the table
+            if (
+                types[i] == "chair" and types[j] == "table" and parent_indices[i] == j
+            ) or (
+                types[j] == "chair" and types[i] == "table" and parent_indices[j] == i
+            ):
+                continue
+
+            # Skip chair-chair comparisons from the same table
+            if (
+                types[i] == "chair"
+                and types[j] == "chair"
+                and parent_indices[i] == parent_indices[j]
+            ):
+                continue
+
+            valid_pairs.append((i, j))
+
+        if not valid_pairs:
+            if self.debug:
+                print("No valid pairs to check")
+            return torch.tensor([1.0])
+
+        valid_rows = torch.tensor([p[0] for p in valid_pairs])
+        valid_cols = torch.tensor([p[1] for p in valid_pairs])
+
+        result = margins[valid_rows, valid_cols].reshape(-1, 1)
+
+        if self.debug:
+            print(f"Collision constraint: {result.shape[0]} pairs checked")
+            if result.shape[0] > 0:
+                print(f"  Min margin: {result.min().item():.4f}")
+                if (result < 0).any():
+                    num_violations = (result < 0).sum().item()
+                    print(f"  {num_violations} collision(s) detected")
+
+                    # Print details about the collisions
+                    for idx in range(result.shape[0]):
+                        if result[idx] < 0:
+                            i, j = valid_rows[idx].item(), valid_cols[idx].item()
+                            print(
+                                f"  Collision between {types[i]} and {types[j]}: "
+                                f"margin={result[idx].item():.4f}"
+                            )
+
+        return result
 
     def add_to_ik_prog(
         self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map

@@ -74,6 +74,8 @@ class Shelf(AndNode):
     LENGTH = 0.6  # y-coordinate
     HEIGHT = 0.783  # z-coordinate
 
+    KEEPOUT_RADIUS = max(WIDTH, LENGTH) / 2.0
+
     # Shelf surface offsets from origin (z-coordinate).
     BOTTOM_OFFSET = -0.3915
     LOWER_OFFSET = -0.12315
@@ -86,7 +88,7 @@ class Shelf(AndNode):
         geom.register_model_file(
             geom_tf, "package://drake_models/manipulation_station/shelves.sdf"
         )
-        super().__init__(tf=tf, physics_geometry_info=None, observed=False)
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
     @classmethod
     def generate_rules(cls):
@@ -1277,7 +1279,7 @@ class Null(TerminalNode):
 
 
 class MinNumObjectsConstraint(StructureConstraint):
-    def __init__(self, min_num_objects, table_node_type):
+    def __init__(self, min_num_objects, table_node_type=Shelf):
         super().__init__(
             lower_bound=torch.tensor([min_num_objects]),
             upper_bound=torch.tensor([torch.inf]),

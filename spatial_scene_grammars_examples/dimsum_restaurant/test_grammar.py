@@ -35,9 +35,13 @@ from spatial_scene_grammars_examples.dimsum_restaurant.grammar import (
     ObjectsOnTableConstraint,
     Restaurant,
     TallStackConstraint,
-    TablesAndChairsNotInCollisionConstraint,
-    MinimumTablesConstraint,
-    NumStacksConstraint,
+    TablesChairsAndShelvesNotInCollisionConstraint,
+)
+from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
+    BoardGameStackHeightConstraint,
+    LargeBoardGameStackHeightConstraint,
+    MinNumObjectsConstraint,
+    ObjectsNotInCollisionWithStacksConstraintStructure,
 )
 
 
@@ -49,11 +53,12 @@ def sample_realistic_scene(
     structure_constraints, pose_constraints = split_constraints(constraints)
     if len(structure_constraints) > 0:
         tree, success = rejection_sample_under_constraints(
-            grammar, structure_constraints, 10000, detach=True, verbose=-1
+            grammar, structure_constraints, 5000, detach=True, verbose=-1
         )  # Need a high-rejection sample budged due to the hard structure constraints
         if not success:
             logging.error("Couldn't rejection sample a feasible tree config.")
             return None, None
+        print("Successfully rejection sampled a tree config.")
     else:
         tree = grammar.sample_tree(detach=True)
 
@@ -115,7 +120,7 @@ def sample_realistic_scene(
     print("Projecting tree to feasibility.")
     feasible_tree = project_tree_to_feasibility(
         deepcopy(good_tree),
-        do_forward_sim=False,
+        do_forward_sim=True,
         timestep=0.001,
         T=2.5,
     )
@@ -262,12 +267,16 @@ if __name__ == "__main__":
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraint_list = [
+        # Restaurant and table constraints.
         TallStackConstraint(),
-        NumStacksConstraint(),
         ObjectOnTableSpacingConstraint(),
         ObjectsOnTableConstraint(),
-        TablesAndChairsNotInCollisionConstraint(),
-        MinimumTablesConstraint(min_tables=3),
+        TablesChairsAndShelvesNotInCollisionConstraint(),
+        # Shelf constraints.
+        BoardGameStackHeightConstraint(max_height=5),
+        LargeBoardGameStackHeightConstraint(max_height=3),
+        MinNumObjectsConstraint(min_num_objects=3),
+        ObjectsNotInCollisionWithStacksConstraintStructure(),
     ]
 
     # If single worker, use original behavior
