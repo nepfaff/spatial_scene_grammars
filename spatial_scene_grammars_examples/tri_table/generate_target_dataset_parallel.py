@@ -7,7 +7,11 @@ import multiprocessing as mp
 import os
 import pickle
 import time
-from multiprocessing import Pool
+import uuid
+import tempfile
+from multiprocessing import Pool, Lock
+import fcntl
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -273,31 +277,54 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def sample_and_save(grammar, constraints, extract, max_tries: int = 1):
+def sample_and_save_direct(grammar, constraints, extract, output_file, task_id):
     """
-    Attempt to sample a realistic scene that meets constraints.
-    Returns either the extracted data or the tree.
-
-    If it fails up to max_tries times, returns None.
+    Sample a scene and save it directly to the output file using file locking.
+    This avoids the shared memory manager bottleneck while maintaining a single output file.
     """
     # Set a unique seed for each process
-    seed = (int(time.time() * 1000000) + os.getpid()) % (2**32)
+    seed = (int(time.time() * 1000000) + os.getpid() + task_id) % (2**32)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    max_tries = 1
     counter = 0
     while counter < max_tries:
         try:
             tree, _ = sample_realistic_scene(grammar, constraints)
             if tree is not None:
-                if extract:
-                    return extract_tree(tree, filter=True)
-                return tree
+                result = extract_tree(tree, filter=True) if extract else tree
+                if result is not None:
+                    # Create a temporary file with the result
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, mode="wb"
+                    ) as temp_file:
+                        pickle.dump(result, temp_file)
+                        temp_path = temp_file.name
+
+                    # Append the temporary file to the output file with file locking
+                    with open(output_file, "ab") as f:
+                        # Acquire an exclusive lock
+                        fcntl.flock(f, fcntl.LOCK_EX)
+                        try:
+                            # Read the temporary file and append its contents
+                            with open(temp_path, "rb") as temp:
+                                f.write(temp.read())
+                            # Ensure data is written to disk
+                            f.flush()
+                            os.fsync(f.fileno())
+                        finally:
+                            # Release the lock
+                            fcntl.flock(f, fcntl.LOCK_UN)
+
+                    # Remove the temporary file
+                    os.unlink(temp_path)
+
+                    return True
         except Exception as e:
-            # If something goes wrong, try again until max_tries is reached.
-            print("Exception during sampling in worker:", e)
+            print(f"Exception during sampling in worker (task {task_id}): {e}")
         counter += 1
-    return None
+    return False
 
 
 def main():
@@ -317,6 +344,14 @@ def main():
 
     start = time.time()
 
+    # Ensure the output directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(dataset_save_file)), exist_ok=True)
+
+    # Create an empty output file if it doesn't exist
+    if not os.path.exists(dataset_save_file):
+        with open(dataset_save_file, "wb") as f:
+            pass
+
     grammar = SpatialSceneGrammar(
         root_node_type=HighClutterTable if high_clutter else Table,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
@@ -332,75 +367,36 @@ def main():
         ),
     ]
 
-    # Set sharing strategy to file_system instead of file_descriptor
-    torch.multiprocessing.set_sharing_strategy('file_system')
-    
+    # Set sharing strategy to file_system
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
     pool = Pool(processes=processes)
 
-    chunk_size = 1000 if N > 1000 else N
-    num_chunks = N // chunk_size
-    remainder = N % chunk_size
+    # Create task arguments - each worker writes directly to the output file
+    task_args = [
+        (grammar, constraints, extract, dataset_save_file, i) for i in range(N)
+    ]
 
-    task_func = sample_and_save
-    task_args = (grammar, constraints, extract)
-    task_timeout = 800
+    # Launch all tasks
+    print(f"Launching {N} tasks across {processes} workers...")
+    results = list(
+        tqdm(
+            pool.starmap(sample_and_save_direct, task_args),
+            total=N,
+            desc="Generating scenes",
+        )
+    )
 
-    # Process full chunks, write after each chunk
-    for _ in tqdm(range(num_chunks), desc="Generating dataset"):
-        # Launch all tasks concurrently
-        async_results = [
-            pool.apply_async(task_func, args=task_args) 
-            for _ in range(chunk_size)
-        ]
-        
-        # Collect results incrementally to avoid memory buildup
-        with open(dataset_save_file, "ab") as f:
-            for i, async_res in enumerate(async_results):
-                try:
-                    res = async_res.get(timeout=task_timeout)
-                    if res is not None:
-                        pickle.dump(res, f)
-                        f.flush()  # Ensure data is written to disk
-                except mp.TimeoutError:
-                    print(f"Worker {i} timeout")
-                except Exception as e:
-                    print(f"Worker {i} exception: {e}")
-                
-                # Clear reference to help garbage collection
-                async_results[i] = None
-                
-                # Periodically force garbage collection
-                if i % 100 == 99:
-                    import gc
-                    gc.collect()
-
-    # Process remainder, if any
-    if remainder > 0:
-        async_results = [
-            pool.apply_async(task_func, args=task_args)
-            for _ in range(remainder)
-        ]
-        
-        with open(dataset_save_file, "ab") as f:
-            for i, async_res in enumerate(async_results):
-                try:
-                    res = async_res.get(timeout=task_timeout)
-                    if res is not None:
-                        pickle.dump(res, f)
-                        f.flush()
-                except mp.TimeoutError:
-                    print(f"Remainder worker {i} timeout")
-                except Exception as e:
-                    print(f"Remainder worker {i} exception: {e}")
-                
-                # Clear reference
-                async_results[i] = None
-
+    # Close the pool
     pool.close()
     pool.join()
 
+    # Count successful scenes
+    successful_count = sum(1 for r in results if r)
+    print(f"Successfully generated {successful_count} scenes out of {N} attempts")
+
     print(
-        f"Generating dataset of {N} samples took {timedelta(seconds=time.time()-start)}"
+        f"Generating dataset of {successful_count} samples took {timedelta(seconds=time.time()-start)}"
     )
 
 
