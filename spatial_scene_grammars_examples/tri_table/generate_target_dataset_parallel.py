@@ -332,6 +332,9 @@ def main():
         ),
     ]
 
+    # Set sharing strategy to file_system instead of file_descriptor
+    torch.multiprocessing.set_sharing_strategy('file_system')
+    
     pool = Pool(processes=processes)
 
     chunk_size = 1000 if N > 1000 else N
@@ -340,57 +343,58 @@ def main():
 
     task_func = sample_and_save
     task_args = (grammar, constraints, extract)
-    task_timeout = 500
+    task_timeout = 800
 
     # Process full chunks, write after each chunk
     for _ in tqdm(range(num_chunks), desc="Generating dataset"):
         # Launch all tasks concurrently
         async_results = [
-            pool.apply_async(task_func, args=task_args) for _ in range(chunk_size)
+            pool.apply_async(task_func, args=task_args) 
+            for _ in range(chunk_size)
         ]
-
-        # Collect results
-        tasks = []
-        for async_res in async_results:
-            try:
-                res = async_res.get(timeout=task_timeout)
-                tasks.append(res)
-            except mp.TimeoutError:
-                tasks.append(None)
-            except Exception as e:
-                print("Worker exception:", e)
-                tasks.append(None)
-
-        # Filter None results
-        tasks = [t for t in tasks if t is not None]
-
-        if tasks:
-            with open(dataset_save_file, "ab") as f:
-                for r in tasks:
-                    pickle.dump(r, f)
+        
+        # Collect results incrementally to avoid memory buildup
+        with open(dataset_save_file, "ab") as f:
+            for i, async_res in enumerate(async_results):
+                try:
+                    res = async_res.get(timeout=task_timeout)
+                    if res is not None:
+                        pickle.dump(res, f)
+                        f.flush()  # Ensure data is written to disk
+                except mp.TimeoutError:
+                    print(f"Worker {i} timeout")
+                except Exception as e:
+                    print(f"Worker {i} exception: {e}")
+                
+                # Clear reference to help garbage collection
+                async_results[i] = None
+                
+                # Periodically force garbage collection
+                if i % 100 == 99:
+                    import gc
+                    gc.collect()
 
     # Process remainder, if any
     if remainder > 0:
         async_results = [
-            pool.apply_async(task_func, args=task_args) for _ in range(remainder)
+            pool.apply_async(task_func, args=task_args)
+            for _ in range(remainder)
         ]
-        rem_tasks = []
-        for async_res in async_results:
-            try:
-                res = async_res.get(timeout=task_timeout)
-                rem_tasks.append(res)
-            except mp.TimeoutError:
-                rem_tasks.append(None)
-            except Exception as e:
-                print("Worker exception:", e)
-                rem_tasks.append(None)
-
-        rem_tasks = [t for t in rem_tasks if t is not None]
-
-        if rem_tasks:
-            with open(dataset_save_file, "ab") as f:
-                for r in rem_tasks:
-                    pickle.dump(r, f)
+        
+        with open(dataset_save_file, "ab") as f:
+            for i, async_res in enumerate(async_results):
+                try:
+                    res = async_res.get(timeout=task_timeout)
+                    if res is not None:
+                        pickle.dump(res, f)
+                        f.flush()
+                except mp.TimeoutError:
+                    print(f"Remainder worker {i} timeout")
+                except Exception as e:
+                    print(f"Remainder worker {i} exception: {e}")
+                
+                # Clear reference
+                async_results[i] = None
 
     pool.close()
     pool.join()
