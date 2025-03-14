@@ -293,13 +293,13 @@ def main():
 
     pool = Pool(processes=processes)
 
-    chunk_size = 10000 if N > 10000 else N
+    chunk_size = 1000 if N > 1000 else N
     num_chunks = N // chunk_size
     remainder = N % chunk_size
 
     task_func = sample_and_save
     task_args = (grammar, constraint_list, extract)
-    task_timeout = 500
+    task_timeout = 1200
 
     # Process full chunks, write after each chunk
     for _ in tqdm(range(num_chunks), desc="Generating dataset"):
