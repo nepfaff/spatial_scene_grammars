@@ -91,6 +91,14 @@ class Table(AndNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
+            ProductionRule(
+                child_type=UtensilCrockOrNone,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor([-0.3, -0.6, 0.0]),
+                    ub=torch.tensor([0.3, 0.6, 0.001]),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            ),
         ]
 
 
@@ -753,6 +761,111 @@ class SharedBowl(OrNode):
         return rules
 
 
+class UtensilCrockOrNone(OrNode):
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=None,
+            observed=False,
+            rule_probs=torch.tensor([0.7, 0.3]),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=UtensilCrock,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Null,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+
+
+class UtensilCrock(RepeatingSetNode):
+    KEEP_OUT_RADIUS = 0.09  # Purposefully inflated
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://anzu/models/home_kitchen/accessories/slnihams_bamboo_utensil_crock.sdf",
+        )
+        super().__init__(
+            tf=tf,
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.1, max_children=10, start_at_one=False
+            ),
+            physics_geometry_info=geom,
+            observed=True,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=StandingUtensil,
+                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                    lb=torch.tensor([-0.01, -0.01, 0.2]),
+                    ub=torch.tensor([0.01, 0.01, 0.201]),
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            )
+        ]
+
+
+class StandingUtensil(OrNode):
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=None,
+            observed=False,
+            rule_probs=torch.ones(4) / 4,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=Fork,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(np.array([0.0, np.pi / 2.0, 0.0]))),
+                    np.array([1e6, 1e6, 1e6]),
+                ),
+            ),
+            ProductionRule(
+                child_type=Knive,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(np.array([0.0, np.pi / 2.0, 0.0]))),
+                    np.array([1e6, 1e6, 1e6]),
+                ),
+            ),
+            ProductionRule(
+                child_type=Spoon,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(np.array([0.0, np.pi / 2.0, 0.0]))),
+                    np.array([1e6, 1e6, 1e6]),
+                ),
+            ),
+            ProductionRule(
+                child_type=TeaSpoon,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(RollPitchYaw(np.array([0.0, np.pi / 2.0, 0.0]))),
+                    np.array([1e6, 1e6, 1e6]),
+                ),
+            ),
+        ]
+
+
 class Toast(OrNode):
     # Height of 0.016m, length of 0.104m
     def __init__(self, tf):
@@ -998,11 +1111,18 @@ class SharedObjectsNotInCollisionWithPlateSettingsConstraint(StructureConstraint
                 .flatten()
                 .tolist()
             )
+            utensil_crocks = scene_tree.get_children_recursive(table, UtensilCrock)
+            utensil_crock_objects = (
+                np.array([scene_tree.get_children(p) for p in utensil_crocks])
+                .flatten()
+                .tolist()
+            )
             shared_objects = (
                 shared_plate_objects
                 + shared_bowl_objects
                 + shared_cereal_box_objects
                 + shared_jug_objects
+                + utensil_crock_objects
             )
 
             # Get plate settings and associated objects.
@@ -1016,6 +1136,8 @@ class SharedObjectsNotInCollisionWithPlateSettingsConstraint(StructureConstraint
             plate_setting_objects = [
                 obj for obj in plate_setting_objects if obj.observed
             ]
+            # Add utensil crock objects to plate setting objects.
+            plate_setting_objects += utensil_crock_objects
 
             if len(plate_setting_objects) == 0 or len(shared_objects) == 0:
                 # Constraint trivially satisfied.
@@ -1036,5 +1158,32 @@ class SharedObjectsNotInCollisionWithPlateSettingsConstraint(StructureConstraint
             # objects.
             distances = torch.cdist(obj_translations, shared_translations)
 
-            # Negative if any object is within keep out radius of any shared object.
-            return torch.flatten(distances - keep_out_radii).unsqueeze(1)
+            # Create a mask to ignore self-comparisons for utensil crock objects
+            mask = torch.ones_like(distances, dtype=torch.bool)
+
+            # For each utensil crock object, identify its indices in both lists and mask them
+            for i, obj1 in enumerate(plate_setting_objects):
+                if obj1 in utensil_crock_objects:
+                    for j, obj2 in enumerate(shared_objects):
+                        if obj1 is obj2:  # Check if it's the same object instance
+                            mask[i, j] = False
+
+            # Apply the mask to distances
+            filtered_distances = distances[mask]
+
+            # Handle the keep_out_radii correctly
+            # We need to repeat the keep_out_radii for each row in the distance matrix
+            # and then apply the same mask
+            expanded_keep_out_radii = keep_out_radii.unsqueeze(0).expand(
+                obj_translations.shape[0], -1
+            )
+            filtered_keep_out_radii = expanded_keep_out_radii[mask]
+
+            if filtered_distances.numel() == 0:
+                # If all comparisons were filtered out, constraint is trivially satisfied
+                return torch.tensor([1.0])
+
+            # Negative if any object is within keep out radius of any shared object
+            return torch.flatten(
+                filtered_distances - filtered_keep_out_radii
+            ).unsqueeze(1)

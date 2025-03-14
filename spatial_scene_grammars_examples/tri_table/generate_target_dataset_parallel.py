@@ -148,6 +148,14 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
                 if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
                     continue
 
+            if isinstance(
+                node, spatial_scene_grammars_examples.tri_table.grammar.UtensilCrock
+            ):
+                # Should have close to zero roll and pitch.
+                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
+                    # Can't just remove as it contains utensils.
+                    return None
+
             filtered_nodes.append(node)
 
         # Keep all scenes with more than 3 objects.
@@ -259,7 +267,7 @@ def sample_realistic_scene(
         deepcopy(good_tree),
         do_forward_sim=True,
         timestep=0.001,
-        T=2.5,
+        T=5.0,
         static_models="package://anzu/models/visuomotor/add_riverway_without_arms.dmd.yaml",
     )
     return feasible_tree, good_tree
