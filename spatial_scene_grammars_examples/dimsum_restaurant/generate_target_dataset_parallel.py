@@ -7,7 +7,11 @@ import multiprocessing as mp
 import os
 import pickle
 import time
-from multiprocessing import Pool
+import uuid
+import tempfile
+from multiprocessing import Pool, Lock
+import fcntl
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -20,9 +24,11 @@ import pickle
 import warnings
 from copy import deepcopy
 from datetime import timedelta
+from functools import partial
 from typing import List
 
 import numpy as np
+from scipy.spatial.transform import Rotation as rot
 from tqdm import tqdm
 
 import spatial_scene_grammars_examples
@@ -232,31 +238,72 @@ def sample_realistic_scene(
     return feasible_tree, good_tree
 
 
-def sample_and_save(grammar, constraints, extract, max_tries: int = 1):
+def sample_and_save_direct(extract, output_file, task_id):
     """
-    Attempt to sample a realistic scene that meets constraints.
-    Returns either the extracted data or the tree.
-
-    If it fails up to max_tries times, returns None.
+    Sample a scene and save it directly to the output file using file locking.
+    This avoids the shared memory manager bottleneck while maintaining a single output file.
     """
     # Set a unique seed for each process
-    seed = (int(time.time() * 1000000) + os.getpid()) % (2**32)
+    seed = (int(time.time() * 1000000) + os.getpid() + task_id) % (2**32)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
+    # Create grammar and constraints inside the worker
+    grammar = SpatialSceneGrammar(
+        root_node_type=Restaurant,
+        root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+    )
+    constraints = [
+        # Restaurant and table constraints.
+        TallStackConstraint(),
+        ObjectOnTableSpacingConstraint(),
+        ObjectsOnTableConstraint(),
+        TablesChairsAndShelvesNotInCollisionConstraint(),
+        # Shelf constraints.
+        BoardGameStackHeightConstraint(max_height=5),
+        LargeBoardGameStackHeightConstraint(max_height=3),
+        MinNumObjectsConstraint(min_num_objects=3),
+        ObjectsNotInCollisionWithStacksConstraintStructure(),
+    ]
+
+    max_tries = 1
     counter = 0
     while counter < max_tries:
         try:
             tree, _ = sample_realistic_scene(grammar, constraints)
             if tree is not None:
-                if extract:
-                    return extract_tree(tree, filter=True)
-                return tree
+                result = extract_tree(tree, filter=True) if extract else tree
+                if result is not None:
+                    # Create a temporary file with the result
+                    with tempfile.NamedTemporaryFile(
+                        delete=False, mode="wb"
+                    ) as temp_file:
+                        pickle.dump(result, temp_file)
+                        temp_path = temp_file.name
+
+                    # Append the temporary file to the output file with file locking
+                    with open(output_file, "ab") as f:
+                        # Acquire an exclusive lock
+                        fcntl.flock(f, fcntl.LOCK_EX)
+                        try:
+                            # Read the temporary file and append its contents
+                            with open(temp_path, "rb") as temp:
+                                f.write(temp.read())
+                            # Ensure data is written to disk
+                            f.flush()
+                            os.fsync(f.fileno())
+                        finally:
+                            # Release the lock
+                            fcntl.flock(f, fcntl.LOCK_UN)
+
+                    # Remove the temporary file
+                    os.unlink(temp_path)
+
+                    return True
         except Exception as e:
-            # If something goes wrong, try again until max_tries is reached.
-            print("Exception during sampling in worker:", e)
+            print(f"Exception during sampling in worker (task {task_id}): {e}")
         counter += 1
-    return None
+    return False
 
 
 def main():
@@ -274,88 +321,57 @@ def main():
 
     start = time.time()
 
-    grammar = SpatialSceneGrammar(
-        root_node_type=Restaurant,
-        root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-    )
-    constraint_list = [
-        # Restaurant and table constraints.
-        TallStackConstraint(),
-        ObjectOnTableSpacingConstraint(),
-        ObjectsOnTableConstraint(),
-        TablesChairsAndShelvesNotInCollisionConstraint(),
-        # Shelf constraints.
-        BoardGameStackHeightConstraint(max_height=5),
-        LargeBoardGameStackHeightConstraint(max_height=3),
-        MinNumObjectsConstraint(min_num_objects=3),
-        ObjectsNotInCollisionWithStacksConstraintStructure(),
-    ]
+    # Ensure the output directory exists
+    os.makedirs(os.path.dirname(os.path.abspath(dataset_save_file)), exist_ok=True)
+
+    # Create an empty output file if it doesn't exist
+    if not os.path.exists(dataset_save_file):
+        with open(dataset_save_file, "wb") as f:
+            pass
+
+    # Set sharing strategy to file_system
+    torch.multiprocessing.set_sharing_strategy("file_system")
 
     pool = Pool(processes=processes)
 
-    chunk_size = 1000 if N > 1000 else N
-    num_chunks = N // chunk_size
-    remainder = N % chunk_size
+    # Create task arguments - each worker writes directly to the output file
+    task_args = [(extract, dataset_save_file, i) for i in range(N)]
 
-    task_func = sample_and_save
-    task_args = (grammar, constraint_list, extract)
-    task_timeout = 1200
-
-    # Process full chunks, write after each chunk
-    for _ in tqdm(range(num_chunks), desc="Generating dataset"):
-        # Launch all tasks concurrently
-        async_results = [
-            pool.apply_async(task_func, args=task_args) for _ in range(chunk_size)
-        ]
-
-        # Collect results
-        tasks = []
-        for async_res in async_results:
-            try:
-                res = async_res.get(timeout=task_timeout)
-                tasks.append(res)
-            except mp.TimeoutError:
-                tasks.append(None)
-            except Exception as e:
-                print("Worker exception:", e)
-                tasks.append(None)
-
-        # Filter None results
-        tasks = [t for t in tasks if t is not None]
-
-        if tasks:
-            with open(dataset_save_file, "ab") as f:
-                for r in tasks:
-                    pickle.dump(r, f)
-
-    # Process remainder, if any
-    if remainder > 0:
-        async_results = [
-            pool.apply_async(task_func, args=task_args) for _ in range(remainder)
-        ]
-        rem_tasks = []
-        for async_res in async_results:
-            try:
-                res = async_res.get(timeout=task_timeout)
-                rem_tasks.append(res)
-            except mp.TimeoutError:
-                rem_tasks.append(None)
-            except Exception as e:
-                print("Worker exception:", e)
-                rem_tasks.append(None)
-
-        rem_tasks = [t for t in rem_tasks if t is not None]
-
-        if rem_tasks:
-            with open(dataset_save_file, "ab") as f:
-                for r in rem_tasks:
-                    pickle.dump(r, f)
-
+    # Launch all tasks
+    print(f"Launching {N} tasks across {processes} workers...")
+    
+    # Use a list to collect results and a tqdm progress bar
+    results = []
+    pbar = tqdm(total=N, desc="Generating scenes")
+    
+    # Define a callback function to update the progress bar
+    def update_pbar(result):
+        pbar.update(1)
+        results.append(result)
+    
+    # Use apply_async with callback to update progress bar
+    jobs = []
+    for args in task_args:
+        job = pool.apply_async(sample_and_save_direct, args, callback=update_pbar)
+        jobs.append(job)
+    
+    # Wait for all jobs to complete
+    for job in jobs:
+        job.wait()
+    
+    # Close the progress bar
+    pbar.close()
+    
+    # Close the pool
     pool.close()
     pool.join()
 
+    # Count successful scenes
+    successful_count = sum(1 for r in results if r)
+    print(f"Successfully generated {successful_count} scenes out of {N} attempts")
+
     print(
-        f"Generating dataset of {N} samples took {timedelta(seconds=time.time()-start)}"
+        f"Generating dataset of {successful_count} samples took {timedelta(seconds=time.time()-start)}"
     )
 
 
