@@ -31,7 +31,10 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.cluttered_bin.grammar import ClutteredBin
+from spatial_scene_grammars_examples.cluttered_bin.grammar import (
+    ClutteredBin,
+    MinNumObjectsConstraint,
+)
 
 
 def sample_realistic_scene(
@@ -110,8 +113,9 @@ def sample_realistic_scene(
     feasible_tree = project_tree_to_feasibility(
         deepcopy(good_tree),
         do_forward_sim=True,
-        timestep=0.01,
+        timestep=0.001,
         T=5.0,
+        fix_orientation=False,
     )
     # feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
@@ -190,9 +194,13 @@ def visualize_scene(scene, meshcat_instance):
     parser = Parser(plant)
     parser.SetAutoRenaming(True)
     # Add Scalable Real2Sim package.
-    package_file_abs_path = os.path.abspath(os.path.expanduser("scalable_real2sim/package.xml"))
+    package_file_abs_path = os.path.abspath(
+        os.path.expanduser("scalable_real2sim/package.xml")
+    )
     if os.path.exists(package_file_abs_path):
-        parser.package_map().Add("scalable_real2sim", os.path.dirname(package_file_abs_path))
+        parser.package_map().Add(
+            "scalable_real2sim", os.path.dirname(package_file_abs_path)
+        )
 
     # Add scene models.
     for obj in scene:
@@ -246,10 +254,12 @@ if __name__ == "__main__":
 
     # Create grammar and constraints
     grammar = SpatialSceneGrammar(
-        root_node_type=partial(ClutteredBin, max_children=10),
+        root_node_type=ClutteredBin,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
-    constraint_list = []
+    constraint_list = [
+        # MinNumObjectsConstraint(min_num_objects=10),
+    ]
 
     # If single worker, use original behavior
     if num_workers == 1:

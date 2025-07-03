@@ -20,37 +20,28 @@ object -> `or node of all manipulands, spawned uniformly above the bin`
 
 All objects inside bin constraint
 """
-ARBITRARY_YAW_ROTATION_RULE = (
-    ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-        RotationMatrix(), np.array([1e6, 1e6, 1])
-    )  # Bigger values = less variance
-)
-ARBITRARY_ROTATION_RULE = (
-    ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
-        RotationMatrix(), np.array([1, 1, 1])
-    )
-)
 
 
 class ClutteredBin(RepeatingSetNode):
     bin_dims = torch.tensor([0.44, 0.29, 0.23])
-    margin = 0.05
+    margin = 0.1
     bin_lower_bounds = torch.tensor(
-        [-bin_dims[0] / 2 + margin, -bin_dims[1] / 2 + margin, bin_dims[2]]
+        [-bin_dims[0] / 2 + margin, -bin_dims[1] / 2 + margin, bin_dims[2] / 2]
     )
     bin_upper_bounds = torch.tensor(
-        [bin_dims[0] / 2 - margin, bin_dims[1] / 2 - margin, bin_dims[2] * 3]
+        [bin_dims[0] / 2 - margin, bin_dims[1] / 2 - margin, bin_dims[2] * 6]
     )
 
-    def __init__(self, tf, max_children=10):
+    def __init__(self, tf, min_children=3, max_children=20):
         geom = PhysicsGeometryInfo(fixed=True)
         geom.register_model_file(
             torch.eye(4), "package://scalable_real2sim/bin/bin.sdf"
         )
 
-        # Uniform distribution over objects, at least one object.
-        rule_probs = torch.ones(max_children) / (max_children - 1)
-        rule_probs[0] = 0.0
+        # Uniform distribution over objects, at least min_children objects.
+        rule_probs = torch.ones(max_children)
+        rule_probs[:min_children-1] = 0.0
+        rule_probs = rule_probs / rule_probs.sum()
 
         super().__init__(
             tf=tf, physics_geometry_info=geom, observed=True, rule_probs=rule_probs
@@ -64,7 +55,9 @@ class ClutteredBin(RepeatingSetNode):
                 xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
                     cls.bin_lower_bounds, cls.bin_upper_bounds
                 ),
-                rotation_rule=SameRotationRule(),
+                rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
+                    RotationMatrix(), np.array([1e2, 1e2, 10])
+                ),  # Bigger values = less variance,
             ),
         ]
 
@@ -73,7 +66,7 @@ class Object(OrNode):
     def __init__(self, tf):
         super().__init__(
             tf=tf,
-            rule_probs=torch.ones(20) / 10,
+            rule_probs=torch.ones(19) / 19,
             observed=False,
             physics_geometry_info=None,
         )
@@ -121,11 +114,11 @@ class Object(OrNode):
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
-            ProductionRule(
-                child_type=Lego,
-                xyz_rule=SamePositionRule(),
-                rotation_rule=SameRotationRule(),
-            ),
+            # ProductionRule(
+            #     child_type=Lego,
+            #     xyz_rule=SamePositionRule(),
+            #     rotation_rule=SameRotationRule(),
+            # ),
             ProductionRule(
                 child_type=LimeJello,
                 xyz_rule=SamePositionRule(),
@@ -383,3 +376,25 @@ class Unitek(TerminalNode):
             "package://scalable_real2sim/unitek/unitek.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class MinNumObjectsConstraint(StructureConstraint):
+    def __init__(self, min_num_objects):
+        super().__init__(
+            lower_bound=torch.tensor([min_num_objects]),
+            upper_bound=torch.tensor([torch.inf]),
+        )
+
+    def eval(self, scene_tree):
+        bins = scene_tree.find_nodes_by_type(ClutteredBin)
+        num_objects = 0
+        for bin in bins:
+            objs = scene_tree.get_children_recursive(bin)
+            observed_objs = [obj for obj in objs if obj.observed]
+            num_objects += len(observed_objs)
+        return torch.tensor([num_objects])
+
+    def add_to_ik_prog(
+        self, scene_tree, ik, mbp, mbp_context, node_to_free_body_ids_map
+    ):
+        raise NotImplementedError()

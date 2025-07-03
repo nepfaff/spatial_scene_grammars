@@ -683,9 +683,10 @@ def project_tree_to_feasibility(
     do_forward_sim=False,
     zmq_url=None,
     prefix="projection",
-    timestep=0.001,
+    timestep=0.01,
     T=1.0,
     static_models: str = None,
+    fix_orientation=True,
 ):
     # Mutates tree into tree with bodies in closest
     # nonpenetrating configuration.
@@ -720,27 +721,28 @@ def project_tree_to_feasibility(
     # Stay close to initial positions.
     prog.AddQuadraticErrorCost(np.eye(nq), q0, q_dec)
 
-    # Add constraints for rotations to stay constant. Only want to optimize translations.
-    for model in node_model_ids:
-        body_indices = mbp.GetBodyIndices(model)
-        if len(body_indices) > 1:
-            continue
+    if fix_orientation:
+        # Add constraints for rotations to stay constant. Only want to optimize translations.
+        for model in node_model_ids:
+            body_indices = mbp.GetBodyIndices(model)
+            if len(body_indices) > 1:
+                continue
 
-        body = mbp.get_body(body_indices[0])
-        if not body.is_floating():
-            continue
+            body = mbp.get_body(body_indices[0])
+            if not body.is_floating():
+                continue
 
-        q_start_idx = body.floating_positions_start()
-        model_quat_dec = q_dec[q_start_idx : q_start_idx + 4]
+            q_start_idx = body.floating_positions_start()
+            model_quat_dec = q_dec[q_start_idx : q_start_idx + 4]
 
-        model_q = mbp.GetPositions(mbp_context, model)
-        model_quat = model_q[:4]
+            model_q = mbp.GetPositions(mbp_context, model)
+            model_quat = model_q[:4]
 
-        prog.AddBoundingBoxConstraint(
-            model_quat,  # lb
-            model_quat,  # ub
-            model_quat_dec,  # vars
-        )
+            prog.AddBoundingBoxConstraint(
+                model_quat,  # lb
+                model_quat,  # ub
+                model_quat_dec,  # vars
+            )
 
     # Nonpenetration constraint.
     ik.AddMinimumDistanceLowerBoundConstraint(0.0, 0.03)
