@@ -515,6 +515,14 @@ def compile_scene_tree_to_mbp_and_sg(
     # else:
     #     print("Greg table package not found.")
 
+    # Add Scalable Real2Sim package.
+    scalable_real2sim_package_path = os.path.expanduser("scalable_real2sim/package.xml")
+    if os.path.exists(scalable_real2sim_package_path):
+        package_file_abs_path = os.path.abspath(scalable_real2sim_package_path)
+        parser.package_map().Add("scalable_real2sim", os.path.dirname(package_file_abs_path))
+    # else:
+    #     print("Scalable Real2Sim package not found.")
+
     world_body = mbp.world_body()
 
     # Add static models.

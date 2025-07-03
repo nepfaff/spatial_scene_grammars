@@ -1,10 +1,11 @@
-import logging
-import os
 import argparse
+import logging
 import multiprocessing as mp
+import os
+from functools import partial
 import time
-from multiprocessing import Pool
 from copy import deepcopy
+from multiprocessing import Pool
 
 import numpy as np
 import torch
@@ -12,13 +13,13 @@ import torch
 torch.set_default_dtype(torch.double)
 
 from pydrake.all import (
-    StartMeshcat,
-    DiagramBuilder,
     AddMultibodyPlantSceneGraph,
+    DiagramBuilder,
+    MeshcatVisualizer,
     Parser,
     RigidTransform,
     Simulator,
-    MeshcatVisualizer,
+    StartMeshcat,
 )
 
 from spatial_scene_grammars.constraints import *
@@ -30,19 +31,7 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.dimsum_restaurant.grammar import (
-    ObjectOnTableSpacingConstraint,
-    ObjectsOnTableConstraint,
-    Restaurant,
-    TallStackConstraint,
-    TablesChairsAndShelvesNotInCollisionConstraint,
-)
-from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
-    BoardGameStackHeightConstraint,
-    LargeBoardGameStackHeightConstraint,
-    MinNumObjectsConstraint,
-    ObjectsNotInCollisionWithStacksConstraintStructure,
-)
+from spatial_scene_grammars_examples.cluttered_bin.grammar import ClutteredBin
 
 
 def sample_realistic_scene(
@@ -121,8 +110,8 @@ def sample_realistic_scene(
     feasible_tree = project_tree_to_feasibility(
         deepcopy(good_tree),
         do_forward_sim=True,
-        timestep=0.001,
-        T=2.5,
+        timestep=0.01,
+        T=5.0,
     )
     # feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
@@ -200,20 +189,10 @@ def visualize_scene(scene, meshcat_instance):
     plant, scene_graph = AddMultibodyPlantSceneGraph(builder, time_step=0.0)
     parser = Parser(plant)
     parser.SetAutoRenaming(True)
-    # Add Anzu package.
-    package_file_abs_path = os.path.abspath(os.path.expanduser("anzu/package.xml"))
+    # Add Scalable Real2Sim package.
+    package_file_abs_path = os.path.abspath(os.path.expanduser("scalable_real2sim/package.xml"))
     if os.path.exists(package_file_abs_path):
-        parser.package_map().Add("anzu", os.path.dirname(package_file_abs_path))
-    # Add Gazebo package.
-    package_file_abs_path = os.path.abspath(os.path.expanduser("gazebo/package.xml"))
-    if os.path.exists(package_file_abs_path):
-        parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
-    # Add Greg table package.
-    package_file_abs_path = os.path.abspath(
-        os.path.expanduser("greg_table/package.xml")
-    )
-    if os.path.exists(package_file_abs_path):
-        parser.package_map().Add("greg_table", os.path.dirname(package_file_abs_path))
+        parser.package_map().Add("scalable_real2sim", os.path.dirname(package_file_abs_path))
 
     # Add scene models.
     for obj in scene:
@@ -252,7 +231,11 @@ if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Generate cluttered bin scenes")
     parser.add_argument(
-        "--workers", type=int, default=1, help="Number of worker processes (default: 1)"
+        "--workers",
+        "-w",
+        type=int,
+        default=1,
+        help="Number of worker processes (default: 1)",
     )
     args = parser.parse_args()
 
@@ -263,21 +246,10 @@ if __name__ == "__main__":
 
     # Create grammar and constraints
     grammar = SpatialSceneGrammar(
-        root_node_type=Restaurant,
+        root_node_type=partial(ClutteredBin, max_children=10),
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
-    constraint_list = [
-        # Restaurant and table constraints.
-        TallStackConstraint(),
-        ObjectOnTableSpacingConstraint(),
-        ObjectsOnTableConstraint(),
-        TablesChairsAndShelvesNotInCollisionConstraint(),
-        # Shelf constraints.
-        BoardGameStackHeightConstraint(max_height=5),
-        LargeBoardGameStackHeightConstraint(max_height=3),
-        MinNumObjectsConstraint(min_num_objects=3),
-        ObjectsNotInCollisionWithStacksConstraintStructure(),
-    ]
+    constraint_list = []
 
     # If single worker, use original behavior
     if num_workers == 1:

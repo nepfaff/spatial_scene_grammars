@@ -3,14 +3,14 @@ import logging
 logging.disable(level=logging.ERROR)
 logger = logging.getLogger("root").setLevel(logging.ERROR)
 import argparse
+import fcntl
 import multiprocessing as mp
 import os
 import pickle
+import tempfile
 import time
 import uuid
-import tempfile
-from multiprocessing import Pool, Lock
-import fcntl
+from multiprocessing import Lock, Pool
 from pathlib import Path
 
 import numpy as np
@@ -47,8 +47,8 @@ from spatial_scene_grammars_examples.dimsum_restaurant.grammar import (
     ObjectOnTableSpacingConstraint,
     ObjectsOnTableConstraint,
     Restaurant,
-    TallStackConstraint,
     TablesChairsAndShelvesNotInCollisionConstraint,
+    TallStackConstraint,
 )
 from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
     BoardGameStackHeightConstraint,
@@ -339,29 +339,29 @@ def main():
 
     # Launch all tasks
     print(f"Launching {N} tasks across {processes} workers...")
-    
+
     # Use a list to collect results and a tqdm progress bar
     results = []
     pbar = tqdm(total=N, desc="Generating scenes")
-    
+
     # Define a callback function to update the progress bar
     def update_pbar(result):
         pbar.update(1)
         results.append(result)
-    
+
     # Use apply_async with callback to update progress bar
     jobs = []
     for args in task_args:
         job = pool.apply_async(sample_and_save_direct, args, callback=update_pbar)
         jobs.append(job)
-    
+
     # Wait for all jobs to complete
     for job in jobs:
         job.wait()
-    
+
     # Close the progress bar
     pbar.close()
-    
+
     # Close the pool
     pool.close()
     pool.join()
