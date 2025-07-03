@@ -113,7 +113,7 @@ def sample_realistic_scene(
     feasible_tree = project_tree_to_feasibility(
         deepcopy(good_tree),
         do_forward_sim=True,
-        timestep=0.001,
+        timestep=0.001,  # Small timestep to avoid passthrough when falling from high.
         T=5.0,
         fix_orientation=False,
     )
@@ -258,6 +258,7 @@ if __name__ == "__main__":
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraint_list = [
+        # Better to specify min_children in the grammar (can't pass as argument...).
         # MinNumObjectsConstraint(min_num_objects=10),
     ]
 

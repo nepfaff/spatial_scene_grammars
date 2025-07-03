@@ -43,18 +43,9 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.dimsum_restaurant.grammar import (
-    ObjectOnTableSpacingConstraint,
-    ObjectsOnTableConstraint,
-    Restaurant,
-    TablesChairsAndShelvesNotInCollisionConstraint,
-    TallStackConstraint,
-)
-from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
-    BoardGameStackHeightConstraint,
-    LargeBoardGameStackHeightConstraint,
+from spatial_scene_grammars_examples.cluttered_bin.grammar import (
+    ClutteredBin,
     MinNumObjectsConstraint,
-    ObjectsNotInCollisionWithStacksConstraintStructure,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -74,23 +65,8 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     - "transform": The 4x4 transformation matrix of the object.
     - "model_path": The path to the object's model.
 
-    Optionally also filters the dataset for failure cases:
-
-    Considered failure cases are:
-    - Shared objects with non-zero rotations about the roll and pitch axes
-    - Shared objects with too high z-translation
-
-    Only the affected object is removed. The scene is removed if removing the object
-    leads to fewer than 3 objects remaining.
-
-    Note that the entire scene is removed if a main plate/ bowl does't have close to
-    zero translation and roll/pitch.
-
-    Shared objects are:
-    - SharedPlate
-    - SharedBowl
-    - CerealBox
-    - Jug
+    Optionally also filters the dataset for objects that fell outside the bin. All
+    scenes with less than 2 objects are removed.
     """
     observed_nodes: List[Node] = tree.get_observed_nodes()
 
@@ -99,33 +75,16 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
         filtered_nodes = []
         for node in observed_nodes:
             translation = np.array(node.translation)
+            z_translation = translation[2]
 
-            # Remove nodes with translation above 8m in any direction.
-            if np.any(np.abs(translation) > 8):
+            # Remove nodes with translation below -0.1m.
+            if z_translation < -0.1:
                 continue
-
-            objects = (
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.Lamp,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.BigBowl,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.StandingEatToLiveBook,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.StackingRing,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.ToyTrain,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.CokeCan,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.TeaBottle,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.JBLSpeaker,
-            )
-            if isinstance(node, objects):
-                # Extract the local z-axis of the object's rotation matrix.
-                local_z_axis = np.array(node.rotation) @ np.array([0, 0, 1])
-
-                # Should have close to zero roll and pitch.
-                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
-                    continue
 
             filtered_nodes.append(node)
 
-        # Keep all scenes with more than 5 objects.
-        if len(filtered_nodes) >= 5:
+        # Keep all scenes with more than 2 objects, including the bin.
+        if len(filtered_nodes) >= 2:
             filtered_observed_nodes = filtered_nodes
         else:
             return None
@@ -232,8 +191,9 @@ def sample_realistic_scene(
     feasible_tree = project_tree_to_feasibility(
         deepcopy(good_tree),
         do_forward_sim=True,
-        timestep=0.001,
-        T=2.5,
+        timestep=0.001,  # Small timestep to avoid passthrough when falling from high.
+        T=5.0,
+        fix_orientation=False,
     )
     return feasible_tree, good_tree
 
@@ -250,20 +210,12 @@ def sample_and_save_direct(extract, output_file, task_id):
 
     # Create grammar and constraints inside the worker
     grammar = SpatialSceneGrammar(
-        root_node_type=Restaurant,
+        root_node_type=ClutteredBin,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraints = [
-        # Restaurant and table constraints.
-        TallStackConstraint(),
-        ObjectOnTableSpacingConstraint(),
-        ObjectsOnTableConstraint(),
-        TablesChairsAndShelvesNotInCollisionConstraint(),
-        # Shelf constraints.
-        BoardGameStackHeightConstraint(max_height=5),
-        LargeBoardGameStackHeightConstraint(max_height=3),
-        MinNumObjectsConstraint(min_num_objects=3),
-        ObjectsNotInCollisionWithStacksConstraintStructure(),
+        # Better to specify min_children in the grammar (can't pass as argument...).
+        # MinNumObjectsConstraint(min_num_objects=10),
     ]
 
     max_tries = 1
