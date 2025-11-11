@@ -321,6 +321,64 @@ def _filter_floor_objects(tree, min_objects=2):
     return filtered_tree
 
 
+def _filter_bin_objects(tree, min_objects=2):
+    """Filter bin objects with bad poses after projection.
+
+    Removes objects that:
+    - Flew away during simulation (|translation| > 5m)
+    - Fell through bin floor (z < -0.1)
+
+    NO orientation checks - bin objects can tumble freely.
+
+    Args:
+        tree: SceneTree to filter
+        min_objects: Minimum number of valid objects required (including bin)
+
+    Returns:
+        Filtered SceneTree or None if too few valid objects remain
+    """
+    filtered_tree = SceneTree()
+    filtered_nodes = []
+
+    for node in tree.nodes:
+        if not node.observed:
+            continue
+
+        translation = np.array(node.translation)
+
+        # Check XY translation threshold (objects shouldn't fly away)
+        if np.any(np.abs(translation) > 5.0):
+            print(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
+            continue
+
+        # Check z-height (objects shouldn't fall through bin floor)
+        z = translation[2]
+        if z < -0.1:
+            print(f"[Filter] Removing {node.__class__.__name__} due to falling through bin floor: z={z}")
+            continue
+
+        # NO orientation checks - bins allow arbitrary rotations
+
+        filtered_nodes.append(node)
+
+    # Check minimum object count (bin + at least 1 object)
+    if len(filtered_nodes) < min_objects:
+        print(f"[Filter] Only {len(filtered_nodes)} valid bin objects, need at least {min_objects}")
+        return None
+
+    # Reconstruct filtered tree
+    for node in tree.nodes:
+        if not node.observed or node in filtered_nodes:
+            filtered_tree.add_node(node)
+
+    for parent, child in tree.edges:
+        if parent in filtered_tree.nodes and child in filtered_tree.nodes:
+            filtered_tree.add_edge(parent, child)
+
+    print(f"[Filter] Bin filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
+    return filtered_tree
+
+
 def sample_bin_contents(bin_pose, seed=None, max_projection_attempts=50):
     """Sample contents for a single bin.
 
@@ -361,8 +419,17 @@ def sample_bin_contents(bin_pose, seed=None, max_projection_attempts=50):
         )
 
         if projected_tree is not None:
-            print(f"[Stage 2b] Bin projection successful")
-            return projected_tree
+            print(f"[Stage 2b] Bin projection successful, filtering objects...")
+
+            # Filter objects with bad poses (flew away, fell through floor, etc.)
+            filtered_tree = _filter_bin_objects(projected_tree, min_objects=2)
+
+            if filtered_tree is not None:
+                print(f"[Stage 2b] Bin filtering successful")
+                return filtered_tree
+            else:
+                print(f"[Stage 2b] Bin filtering failed (too few valid objects), re-sampling...")
+                continue
         else:
             print(f"[Stage 2b] Bin projection failed, re-sampling...")
 

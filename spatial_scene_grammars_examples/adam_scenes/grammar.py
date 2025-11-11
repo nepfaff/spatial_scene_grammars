@@ -12,7 +12,10 @@ from spatial_scene_grammars.drake_interop import *
 from spatial_scene_grammars.nodes import *
 from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.scene_grammar import *
-from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import Shelf, EmptyShelf
+from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
+    Shelf,
+    EmptyShelf,
+)
 
 """
 Restaurant -> table (1-10) & shelf (0-3)
@@ -78,9 +81,9 @@ class ClutteredBin(RepeatingSetNode):
     # For collision detection (similar to Shelf.KEEPOUT_RADIUS)
     KEEPOUT_RADIUS = max(bin_dims[0].item(), bin_dims[1].item()) / 2.0  # ~0.22m
 
-    def __init__(self, tf, min_children=3, max_children=20):
+    def __init__(self, tf, min_children=3, max_children=15):
         geom = PhysicsGeometryInfo(fixed=True)
-        geom.register_model_file(torch.eye(4), "package://greg/models/misc/bin/bin.sdf")
+        geom.register_model_file(torch.eye(4), "package://greg/models/misc/bin/bin_coacd.sdf")
 
         # Uniform distribution over objects, at least min_children objects.
         rule_probs = torch.ones(max_children)
@@ -95,8 +98,8 @@ class ClutteredBin(RepeatingSetNode):
     def generate_rules(cls):
         return [
             ProductionRule(
-                child_type=Null,  # Using Null instead of Object for now
-                xyz_rule=WorldFrameBBoxOffsetRule.from_bounds(
+                child_type=Object,
+                xyz_rule=ParentFrameBBoxOffsetRule.from_bounds(
                     cls.bin_lower_bounds, cls.bin_upper_bounds
                 ),
                 rotation_rule=ParentFrameBinghamRotationRule.from_rotation_and_rpy_variances(
@@ -104,6 +107,245 @@ class ClutteredBin(RepeatingSetNode):
                 ),  # Bigger values = less variance
             ),
         ]
+
+
+class Object(OrNode):
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            rule_probs=torch.ones(14) / 14,
+            observed=False,
+            physics_geometry_info=None,
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=CerealBox,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Toast,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Apple,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Apple1,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Apple2,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=Apple3,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=FuerteAvocado,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=HassAvocado,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=LulaAvocado,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=StarkrimsonPear,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=BosePear,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=GreenAnjouPear,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=TeaBottle,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=BananaConcentrate,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+
+
+class CerealBox(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/food/cereal/punyos_cereal_box.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class Toast(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/food/sandwich/fake_toasted_bread_slice_mesh_collision.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class Apple(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/apples/gala_apple.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class Apple1(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/apples/fake_red_delicious_apple.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class Apple2(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/apples/granny_smith_apple.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class Apple3(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/apples/golden_delicious_apple.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class FuerteAvocado(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/avocados/fuerte_avocado.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class HassAvocado(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/avocados/hass_avocado.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class LulaAvocado(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/avocados/lula_avocado.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class StarkrimsonPear(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/pears/starkrimson_pear.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class BosePear(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/pears/bose_pear.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class GreenAnjouPear(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/fruits/pears/green_anjou_pear.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class TeaBottle(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/home_kitchen/junk/tea_bottle.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
+class BananaConcentrate(TerminalNode):
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=False)
+        geom.register_model_file(
+            drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
+            "package://tri/models/home_kitchen/junk/rlg_banana_concentrate.sdf",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
 
 class EmptyClutteredBin(TerminalNode):
@@ -196,9 +438,11 @@ class SharedTeacups(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=Teacup,
-                xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.02, 0.02, 1e-16]),
+                xyz_rule=CircularOffsetRule(
+                    radius=0.7,
+                    z_height=0.0,
+                    angle_min=-110.0,
+                    angle_max=110.0,
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )
@@ -221,9 +465,11 @@ class SharedTeapots(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=Teapot,
-                xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.01, 0.01, 1e-16]),
+                xyz_rule=CircularOffsetRule(
+                    radius=0.7,
+                    z_height=0.0,
+                    angle_min=-110.0,
+                    angle_max=110.0,
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )
@@ -256,9 +502,11 @@ class SharedSteamers(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=SteamerBottom,
-                xyz_rule=ParentFrameGaussianOffsetRule(
-                    mean=torch.tensor([0.0, 0.0, 0.00]),
-                    variance=torch.tensor([0.025, 0.025, 1e-16]),
+                xyz_rule=CircularOffsetRule(
+                    radius=0.7,
+                    z_height=0.0,
+                    angle_min=-110.0,
+                    angle_max=110.0,
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )
@@ -301,7 +549,8 @@ class FloorObjectsRoot(AndNode):
     Used in hierarchical multi-stage sampling to ensure SharedStuff objects are placed
     in the pie region [-110, 110] at radius 0.9m, matching the original AdamScene behavior.
     """
-    SHARED_STUFF_RADIUS = 0.9  # Match AdamScene radius
+
+    SHARED_STUFF_RADIUS = 0.7  # Match AdamScene radius
 
     def __init__(self, tf):
         super().__init__(tf=tf, physics_geometry_info=None, observed=False)
@@ -329,7 +578,7 @@ class Bins(RepeatingSetNode):
             physics_geometry_info=None,
             observed=False,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.25, max_children=3, start_at_one=False
+                p=0.3, max_children=3, start_at_one=False
             ),
         )
 
@@ -353,7 +602,7 @@ class Shelves(RepeatingSetNode):
             physics_geometry_info=None,
             observed=False,
             rule_probs=RepeatingSetNode.get_geometric_rule_probs(
-                p=0.25, max_children=3, start_at_one=False
+                p=0.3, max_children=3, start_at_one=False
             ),
         )
 
@@ -610,6 +859,7 @@ class MinNumShelvesAndBinsConstraint(StructureConstraint):
         empty_shelves = scene_tree.find_nodes_by_type(EmptyShelf)
         empty_bins = scene_tree.find_nodes_by_type(EmptyClutteredBin)
         total_count = len(shelves) + len(bins) + len(empty_shelves) + len(empty_bins)
+
         return torch.tensor([float(total_count)])
 
 
@@ -813,8 +1063,7 @@ class SharedStuffNotInCollisionWithShelvesAndBins(PoseConstraint):
                     shelf_length = Shelf.LENGTH / 2.0
 
                 separation = self._check_circle_obb_separation(
-                    obj, obj_radius,
-                    shelf, shelf_width, shelf_length,
+                    obj, obj_radius, shelf, shelf_width, shelf_length
                 )
                 separations.append(separation)
 
@@ -829,7 +1078,8 @@ class SharedStuffNotInCollisionWithShelvesAndBins(PoseConstraint):
                     bin_half_y = ClutteredBin.bin_dims[1] / 2.0
 
                 separation = self._check_circle_obb_separation(
-                    obj, obj_radius,
+                    obj,
+                    obj_radius,
                     bin_node,
                     bin_half_x,  # X half-extent
                     bin_half_y,  # Y half-extent

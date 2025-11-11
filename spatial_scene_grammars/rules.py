@@ -426,6 +426,43 @@ class WorldFrameBBoxOffsetRule(WorldFrameBBoxRule):
     # Uses encode_cost implementation in WorldFrameBBoxRule
 
 
+class ParentFrameBBoxOffsetRule(WorldFrameBBoxOffsetRule):
+    """Child xyz is parent xyz + a uniform offset in [lb, ub] in parent frame.
+
+    Similar to WorldFrameBBoxOffsetRule, but the offset is rotated by the parent's
+    rotation before being added to the parent position. This ensures that when the
+    parent rotates, the bounding box rotates with it.
+    """
+
+    def sample_xyz(self, parent):
+        offset = pyro.sample("ParentFrameBBoxOffsetRule_xyz", self.xyz_dist)
+        return parent.translation + torch.matmul(parent.rotation, offset)
+
+    def score_child(self, parent, child):
+        xyz_offset_world = child.translation - parent.translation
+        xyz_offset_parent = torch.matmul(parent.rotation.T, xyz_offset_world)
+        return self.xyz_dist.log_prob(xyz_offset_parent).sum()
+
+    def get_site_values(self, parent, child):
+        xyz_offset_world = child.translation - parent.translation
+        xyz_offset_parent = torch.matmul(parent.rotation.T, xyz_offset_world)
+        return {
+            "ParentFrameBBoxOffsetRule_xyz": SiteValue(
+                self.xyz_dist, xyz_offset_parent
+            )
+        }
+
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
+        # Similar to ParentFrameGaussianOffsetRule, this requires handling bilinear
+        # terms arising from rotating the offsets. For now, we'll skip constraint
+        # encoding for parent frame bbox rules.
+        pass
+
+    # Uses encode_cost implementation from WorldFrameBBoxRule
+
+
 class WorldFrameGaussianOffsetRule(XyzProductionRule):
     """Child xyz is diagonally-Normally distributed relative to parent in world frame."""
 
