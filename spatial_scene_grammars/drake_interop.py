@@ -499,6 +499,12 @@ def compile_scene_tree_to_mbp_and_sg(
     # else:
     #     print("Anzu package not found.")
 
+    # Add Tri package.
+    tri_package_path = os.path.expanduser("models/tri/package.xml")
+    if os.path.exists(tri_package_path):
+        package_file_abs_path = os.path.abspath(tri_package_path)
+        parser.package_map().Add("tri", os.path.dirname(package_file_abs_path))
+
     # Add Gazebo package.
     gazebo_package_path = os.path.expanduser("gazebo/package.xml")
     if os.path.exists(gazebo_package_path):
@@ -506,6 +512,11 @@ def compile_scene_tree_to_mbp_and_sg(
         parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
     # else:
     #     print("Gazebo package not found.")
+    # Add Gazebo package.
+    gazebo_package_path = os.path.expanduser("models/gazebo/package.xml")
+    if os.path.exists(gazebo_package_path):
+        package_file_abs_path = os.path.abspath(gazebo_package_path)
+        parser.package_map().Add("gazebo", os.path.dirname(package_file_abs_path))
 
     # Add Greg table package.
     greg_table_package_path = os.path.expanduser("greg_table/package.xml")
@@ -514,6 +525,10 @@ def compile_scene_tree_to_mbp_and_sg(
         parser.package_map().Add("greg_table", os.path.dirname(package_file_abs_path))
     # else:
     #     print("Greg table package not found.")
+    greg_package_path = os.path.expanduser("models/greg/package.xml")
+    if os.path.exists(greg_package_path):
+        package_file_abs_path = os.path.abspath(greg_package_path)
+        parser.package_map().Add("greg", os.path.dirname(package_file_abs_path))
 
     # Add Scalable Real2Sim package.
     scalable_real2sim_package_path = os.path.expanduser("scalable_real2sim/package.xml")
@@ -707,7 +722,7 @@ def project_tree_to_feasibility(
     nq = len(q0)
 
     if nq == 0:
-        logging.warn("Generated MBP had no positions.")
+        logging.warning("Generated MBP had no positions.")
         return None
 
     # Set up projection NLP.
@@ -770,7 +785,7 @@ def project_tree_to_feasibility(
 
     result = solver.Solve(prog, None, options)
     if not result.is_success():
-        logging.warn("Projection failed.")
+        logging.warning("Projection failed.")
         return None
 
     # DEBUG Logic
@@ -791,7 +806,7 @@ def project_tree_to_feasibility(
         try:
             sim.AdvanceTo(T)
         except:
-            logging.warn("Forward sim failed.")
+            logging.warning("Forward sim failed.")
             return None
 
     # Reload poses back into tree
@@ -833,7 +848,7 @@ def project_tree_to_feasibility_via_sim(
     nq = len(q0)
 
     if nq == 0:
-        logging.warn("Generated MBP had no positions.")
+        logging.warning("Generated MBP had no positions.")
         return tree
 
     sim = Simulator(diagram, diagram_context)

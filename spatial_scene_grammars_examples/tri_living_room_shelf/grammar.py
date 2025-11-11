@@ -85,8 +85,11 @@ class Shelf(AndNode):
     def __init__(self, tf):
         geom = PhysicsGeometryInfo(fixed=True)
         geom_tf = torch.eye(4)
+        # geom.register_model_file(
+        #     geom_tf, "package://drake_models/manipulation_station/shelves.sdf"
+        # )
         geom.register_model_file(
-            geom_tf, "package://drake_models/manipulation_station/shelves.sdf"
+            geom_tf, "package://tri/drake_models/shelves.sdf"
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -310,7 +313,7 @@ class Plate(OrNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/plates/carlisle_plate_mesh_collision.sdf",
+            "package://tri/models/home_kitchen/plates/plate_v1_mesh_collision.sdf",
         )
         super().__init__(
             tf=tf,
@@ -454,7 +457,7 @@ class BigBowl(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/bowls/generic_fruit_bowl.sdf",
+            "package://tri/models/home_kitchen/bowls/generic_fruit_bowl.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -776,7 +779,7 @@ class CokeCan(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/junk/coke.sdf",
+            "package://tri/models/home_kitchen/junk/rlg_banana_concentrate.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -827,7 +830,7 @@ class TeaBottle(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/home_kitchen/junk/tea_bottle.sdf",
+            "package://tri/models/home_kitchen/junk/tea_bottle.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -1240,7 +1243,7 @@ class Toast(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/food/sandwich/fake_toasted_bread_slice_mesh_collision.sdf",
+            "package://tri/models/food/sandwich/fake_toasted_bread_slice_mesh_collision.sdf",
         )
         super().__init__(
             tf=tf,
@@ -1256,7 +1259,7 @@ class Apple(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/fruits/apples/gala_apple.sdf",
+            "package://tri/models/fruits/apples/gala_apple.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
@@ -1268,7 +1271,7 @@ class Pear(TerminalNode):
         geom = PhysicsGeometryInfo(fixed=False)
         geom.register_model_file(
             drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
-            "package://anzu/models/fruits/pears/bose_pear.sdf",
+            "package://tri/models/fruits/pears/bose_pear.sdf",
         )
         super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 

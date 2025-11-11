@@ -82,7 +82,7 @@ class ProductionRule:
             child = self.child_type(tf=torch.eye(4))
         with scope(prefix=child.name):
             xyz = self.xyz_rule.sample_xyz(parent)
-            rotmat = self.rotation_rule.sample_rotation(parent)
+            rotmat = self.rotation_rule.sample_rotation(parent, child_xyz=xyz)
         tf = torch.empty(4, 4)
         tf[:3, :3] = rotmat[:, :]
         tf[:3, 3] = xyz[:]
@@ -816,6 +816,113 @@ class WorldFramePlanarGaussianOffsetRule(XyzProductionRule):
         prog.AddQuadraticCost(-total_ll)
 
 
+class CircularOffsetRule(XyzProductionRule):
+    """Child xyz is uniformly distributed on a circular arc of given radius around parent.
+    Position is sampled in polar coordinates (uniform angle, fixed radius) in the XY plane,
+    at a specified z-height offset. Angle range can be restricted via angle_min/angle_max."""
+
+    def __init__(
+        self, radius=3.0, z_height=0.0, angle_min=-180.0, angle_max=180.0, **kwargs
+    ):
+        assert isinstance(radius, (float, int)) and radius > 0
+        assert isinstance(z_height, (float, int))
+        assert isinstance(angle_min, (float, int))
+        assert isinstance(angle_max, (float, int))
+        assert angle_max > angle_min, "angle_max must be greater than angle_min"
+
+        # Convert degrees to radians for internal use
+        self.angle_min_rad = torch.tensor(float(angle_min) * np.pi / 180.0)
+        self.angle_max_rad = torch.tensor(float(angle_max) * np.pi / 180.0)
+
+        self.parameters = {
+            "radius": torch.tensor(float(radius)),
+            "z_height": torch.tensor(float(z_height)),
+        }
+        super().__init__(**kwargs)
+
+    def sample_xyz(self, parent):
+        # Sample angle uniformly from restricted range [angle_min_rad, angle_max_rad]
+        angle = pyro.sample(
+            "CircularOffsetRule_angle",
+            dist.Uniform(self.angle_min_rad, self.angle_max_rad),
+        )
+        # Convert polar to Cartesian
+        x_offset = self.radius * torch.cos(angle)
+        y_offset = self.radius * torch.sin(angle)
+        offset = torch.tensor([x_offset, y_offset, self.z_height])
+        return parent.translation + offset
+
+    def score_child(self, parent, child):
+        # Check if child is at correct radius and z-height
+        offset = child.translation - parent.translation
+        xy_dist = torch.sqrt(offset[0] ** 2 + offset[1] ** 2)
+
+        # Check radius and z-height match
+        if not torch.isclose(xy_dist, self.radius, atol=1e-3):
+            return torch.tensor(-np.inf)
+        if not torch.isclose(offset[2], self.z_height, atol=1e-3):
+            return torch.tensor(-np.inf)
+
+        # Check if angle is within allowed range
+        angle = torch.atan2(offset[1], offset[0])
+        if angle < self.angle_min_rad or angle > self.angle_max_rad:
+            return torch.tensor(-np.inf)
+
+        # Log probability of uniform distribution over restricted arc
+        # = log(1 / arc_length) = -log(angle_max - angle_min)
+        arc_length = self.angle_max_rad - self.angle_min_rad
+        return -torch.log(arc_length)
+
+    def get_site_values(self, parent, child):
+        # Compute angle from child position
+        offset = child.translation - parent.translation
+        angle = torch.atan2(offset[1], offset[0])
+
+        # Use restricted angle distribution
+        angle_dist = dist.Uniform(self.angle_min_rad, self.angle_max_rad)
+        return {"CircularOffsetRule_angle": SiteValue(angle_dist, angle)}
+
+    @classmethod
+    def get_parameter_prior(cls):
+        return {
+            "radius": dist.Uniform(torch.tensor(0.5), torch.tensor(10.0)),
+            "z_height": dist.Normal(torch.tensor(0.0), torch.tensor(1.0)),
+        }
+
+    @property
+    def parameters(self):
+        return {"radius": self.radius, "z_height": self.z_height}
+
+    @parameters.setter
+    def parameters(self, parameters):
+        self.radius = parameters["radius"]
+        self.z_height = parameters["z_height"]
+
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
+        # Constrain child to be at exact radius from parent in XY plane
+        # and at exact z_height
+        radius = optim_params["radius"]
+        z_height = optim_params["z_height"]
+
+        xy_offset = child.t_optim[:2] - parent.t_optim[:2]
+        # Add constraint: x^2 + y^2 = radius^2
+        prog.AddConstraint(
+            xy_offset[0] ** 2 + xy_offset[1] ** 2 == radius**2
+        )
+        # Constrain z offset
+        prog.AddLinearConstraint(child.t_optim[2] == parent.t_optim[2] + z_height)
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        # Uniform distribution over the circle, constant cost
+        # Log prob = -log(2π)
+        log_prob = -np.log(2.0 * np.pi)
+        prog.AddLinearCost(-log_prob * active)
+
+
 ## Rotation production rules
 class RotationProductionRule:
     """
@@ -826,7 +933,7 @@ class RotationProductionRule:
     def __init__(self, fix_parameters=False):
         self.fix_parameters = fix_parameters
 
-    def sample_rotation(self, parent):
+    def sample_rotation(self, parent, child_xyz=None):
         raise NotImplementedError()
 
     def score_child(self, parent, child):
@@ -887,7 +994,7 @@ class SameRotationRule(RotationProductionRule):
         self.offset = offset
         super().__init__(**kwargs)
 
-    def sample_rotation(self, parent):
+    def sample_rotation(self, parent, child_xyz=None):
         return torch.matmul(parent.rotation, self.offset)
 
     def score_child(self, parent, child):
@@ -943,7 +1050,7 @@ class UnconstrainedRotationRule(RotationProductionRule):
         self.scaling = torch.tensor([1.0, 1.0, 2.0]) * np.pi ** (2.0 / 3)
         self.u_dist = dist.Uniform(torch.zeros(3), true_ub * self.scaling)
 
-    def sample_rotation(self, parent):
+    def sample_rotation(self, parent, child_xyz=None):
         # Sample random unit quaternion via
         # http://planning.cs.uiuc.edu/node198.html (referencing
         # Honkai's implementation in Drake), and convert to rotation
@@ -1046,6 +1153,109 @@ class UnconstrainedRotationRule(RotationProductionRule):
         return -self.score_child(parent, child).detach().item() * active
 
 
+class FaceOriginRotationRule(RotationProductionRule):
+    """Child rotation is deterministically set to face toward a target point
+    (default: origin). Useful for arranging objects in a circle facing inward.
+
+    The rotation is computed such that a specified axis of the child points toward
+    the target point. Only yaw rotation is modified; roll and pitch remain zero."""
+
+    def __init__(self, target_point=None, facing_axis="-y", **kwargs):
+        if target_point is None:
+            target_point = torch.zeros(3)
+        assert isinstance(target_point, torch.Tensor) and target_point.shape == (3,)
+        self.target_point = target_point
+
+        # Parse facing_axis parameter
+        if isinstance(facing_axis, str):
+            axis_offsets = {
+                "x": 0.0,
+                "-x": np.pi,
+                "y": -np.pi / 2.0,
+                "-y": np.pi / 2.0,
+            }
+            assert facing_axis in axis_offsets, f"facing_axis must be one of {list(axis_offsets.keys())}"
+            self.axis_offset = axis_offsets[facing_axis]
+            self.facing_axis = facing_axis
+        else:
+            raise ValueError("facing_axis must be a string like 'x', '-x', 'y', '-y'")
+
+        super().__init__(**kwargs)
+
+    def _compute_facing_rotation(self, position):
+        """Compute rotation matrix to face target from given position."""
+        # Compute direction from position to target
+        direction = self.target_point - position
+
+        # If at target, return identity (no specific facing direction)
+        xy_dist = torch.sqrt(direction[0] ** 2 + direction[1] ** 2)
+        if xy_dist < 1e-6:
+            return torch.eye(3)
+
+        # Compute base yaw angle toward target
+        # atan2(y, x) gives angle where +X axis points
+        base_angle = torch.atan2(direction[1], direction[0])
+
+        # Add offset based on which axis should point toward target
+        angle = base_angle + self.axis_offset
+
+        # Create rotation matrix around Z axis
+        cos_a = torch.cos(angle)
+        sin_a = torch.sin(angle)
+        R = torch.tensor([
+            [cos_a, -sin_a, 0.0],
+            [sin_a, cos_a, 0.0],
+            [0.0, 0.0, 1.0]
+        ])
+        return R
+
+    def sample_rotation(self, parent, child_xyz=None):
+        # Use child_xyz if provided, otherwise fall back to parent position
+        position = child_xyz if child_xyz is not None else parent.translation
+        return self._compute_facing_rotation(position)
+
+    def score_child(self, parent, child):
+        # Use child's actual position to compute expected rotation
+        expected_rotation = self._compute_facing_rotation(child.translation)
+        if torch.allclose(expected_rotation, child.rotation, atol=1e-3):
+            return torch.tensor(0.0)
+        return torch.tensor(-np.inf)
+
+    def get_site_values(self, parent, child):
+        return {}
+
+    @classmethod
+    def get_parameter_prior(cls):
+        return {}
+
+    @property
+    def parameters(self):
+        return {}
+
+    @parameters.setter
+    def parameters(self, parameters):
+        if len(parameters.keys()) > 0:
+            raise ValueError("FaceOriginRotationRule has no learnable parameters.")
+
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
+        # This is a deterministic rotation based on parent position
+        # In optimization, we'd need to express rotation as function of parent.t_optim
+        # For now, mark as not fully constrained
+        # TODO: Implement proper constraint encoding
+        return False
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        # Deterministic rule, zero cost when satisfied
+        # Cost encoding would require expressing rotation constraint
+        # For now, return zero cost
+        # TODO: Implement proper cost encoding
+        pass
+
+
 def recover_relative_angle_axis(
     parent,
     child,
@@ -1120,7 +1330,7 @@ class UniformBoundedRevoluteJointRule(RotationProductionRule):
         self.parameters = {"center": center, "width": width}
         super().__init__(**kwargs)
 
-    def sample_rotation(self, parent):
+    def sample_rotation(self, parent, child_xyz=None):
         angle = pyro.sample("UniformBoundedRevoluteJointRule_theta", self._angle_dist)
         angle_axis = self.axis * angle
         R_offset = axis_angle_to_matrix(angle_axis.unsqueeze(0))[0, ...]
@@ -1436,7 +1646,7 @@ class WorldFrameBinghamRotationRule(RotationProductionRule):
         self.parameters = {"M": M, "Z": Z}
         super().__init__(**kwargs)
 
-    def sample_rotation(self, parent):
+    def sample_rotation(self, parent, child_xyz=None):
         quat = pyro.sample("WorldFrameBinghamRotationRule_quat", self._bingham_dist)
         R = quaternion_to_matrix(quat)
         return R
@@ -1518,7 +1728,7 @@ class ParentFrameBinghamRotationRule(WorldFrameBinghamRotationRule):
     in parent rotation frame.
     """
 
-    def sample_rotation(self, parent):
+    def sample_rotation(self, parent, child_xyz=None):
         quat = pyro.sample("ParentFrameBinghamRotationRule_quat", self._bingham_dist)
         R = quaternion_to_matrix(quat)
         return torch.matmul(parent.rotation, R)
