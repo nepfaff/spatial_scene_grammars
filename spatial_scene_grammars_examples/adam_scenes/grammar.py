@@ -438,8 +438,9 @@ class SharedTeacups(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=Teacup,
-                xyz_rule=CircularOffsetRule(
-                    radius=0.7,
+                xyz_rule=AnnulusOffsetRule(
+                    min_radius=0.35,
+                    max_radius=0.7,
                     z_height=0.0,
                     angle_min=-110.0,
                     angle_max=110.0,
@@ -465,8 +466,9 @@ class SharedTeapots(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=Teapot,
-                xyz_rule=CircularOffsetRule(
-                    radius=0.7,
+                xyz_rule=AnnulusOffsetRule(
+                    min_radius=0.35,
+                    max_radius=0.7,
                     z_height=0.0,
                     angle_min=-110.0,
                     angle_max=110.0,
@@ -502,8 +504,9 @@ class SharedSteamers(RepeatingSetNode):
         return [
             ProductionRule(
                 child_type=SteamerBottom,
-                xyz_rule=CircularOffsetRule(
-                    radius=0.7,
+                xyz_rule=AnnulusOffsetRule(
+                    min_radius=0.35,
+                    max_radius=0.7,
                     z_height=0.0,
                     angle_min=-110.0,
                     angle_max=110.0,
@@ -588,7 +591,7 @@ class Bins(RepeatingSetNode):
             ProductionRule(
                 child_type=ClutteredBin,
                 xyz_rule=CircularOffsetRule(
-                    radius=0.6, z_height=0.0, angle_min=-110.0, angle_max=110.0
+                    radius=0.6, z_height=0.0, angle_min=-120.0, angle_max=120.0
                 ),
                 rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
             )

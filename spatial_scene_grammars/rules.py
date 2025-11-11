@@ -960,6 +960,160 @@ class CircularOffsetRule(XyzProductionRule):
         prog.AddLinearCost(-log_prob * active)
 
 
+class AnnulusOffsetRule(XyzProductionRule):
+    """Child xyz is uniformly distributed in an annular (ring) region around parent.
+
+    Position is sampled in polar coordinates with:
+    - Radius sampled uniformly in AREA (not radius), giving equal probability per unit area
+    - Angle sampled uniformly in [angle_min, angle_max]
+
+    This creates uniform distribution throughout the pie/annulus region in the XY plane,
+    at a specified z-height offset.
+    """
+
+    def __init__(
+        self,
+        min_radius=0.4,
+        max_radius=1.0,
+        z_height=0.0,
+        angle_min=-180.0,
+        angle_max=180.0,
+        **kwargs
+    ):
+        assert isinstance(min_radius, (float, int)) and min_radius >= 0
+        assert isinstance(max_radius, (float, int)) and max_radius > min_radius
+        assert isinstance(z_height, (float, int))
+        assert isinstance(angle_min, (float, int))
+        assert isinstance(angle_max, (float, int))
+        assert angle_max > angle_min, "angle_max must be greater than angle_min"
+
+        # Convert degrees to radians for internal use
+        self.angle_min_rad = torch.tensor(float(angle_min) * np.pi / 180.0)
+        self.angle_max_rad = torch.tensor(float(angle_max) * np.pi / 180.0)
+
+        self.parameters = {
+            "min_radius": torch.tensor(float(min_radius)),
+            "max_radius": torch.tensor(float(max_radius)),
+            "z_height": torch.tensor(float(z_height)),
+        }
+        super().__init__(**kwargs)
+
+    def sample_xyz(self, parent):
+        # Sample r^2 uniformly, then take sqrt for uniform area distribution
+        # This gives equal probability per unit area in the annulus
+        r_squared = pyro.sample(
+            "AnnulusOffsetRule_r_squared",
+            dist.Uniform(self.min_radius**2, self.max_radius**2),
+        )
+        radius = torch.sqrt(r_squared)
+
+        # Sample angle uniformly from restricted range
+        angle = pyro.sample(
+            "AnnulusOffsetRule_angle",
+            dist.Uniform(self.angle_min_rad, self.angle_max_rad),
+        )
+
+        # Convert polar to Cartesian
+        x_offset = radius * torch.cos(angle)
+        y_offset = radius * torch.sin(angle)
+        offset = torch.tensor([x_offset, y_offset, self.z_height])
+        return parent.translation + offset
+
+    def score_child(self, parent, child):
+        # Check if child is within radius bounds and at correct z-height
+        offset = child.translation - parent.translation
+        xy_dist = torch.sqrt(offset[0] ** 2 + offset[1] ** 2)
+
+        # Check radius is in [min_radius, max_radius]
+        if xy_dist < self.min_radius or xy_dist > self.max_radius:
+            return torch.tensor(-np.inf)
+
+        # Check z-height matches
+        if not torch.isclose(offset[2], self.z_height, atol=1e-3):
+            return torch.tensor(-np.inf)
+
+        # Check if angle is within allowed range
+        angle = torch.atan2(offset[1], offset[0])
+        if angle < self.angle_min_rad or angle > self.angle_max_rad:
+            return torch.tensor(-np.inf)
+
+        # Log probability for uniform distribution over annulus area
+        # Area = (arc_length / 2π) * π * (r_max^2 - r_min^2)
+        #      = (angle_range / 2) * (r_max^2 - r_min^2)
+        angle_range = self.angle_max_rad - self.angle_min_rad
+        area = (angle_range / 2.0) * (self.max_radius**2 - self.min_radius**2)
+        return -torch.log(area)
+
+    def get_site_values(self, parent, child):
+        # Compute radius and angle from child position
+        offset = child.translation - parent.translation
+        xy_dist = torch.sqrt(offset[0] ** 2 + offset[1] ** 2)
+        r_squared = xy_dist**2
+        angle = torch.atan2(offset[1], offset[0])
+
+        # Create distributions for the sampled values
+        r_squared_dist = dist.Uniform(self.min_radius**2, self.max_radius**2)
+        angle_dist = dist.Uniform(self.angle_min_rad, self.angle_max_rad)
+
+        return {
+            "AnnulusOffsetRule_r_squared": SiteValue(r_squared_dist, r_squared),
+            "AnnulusOffsetRule_angle": SiteValue(angle_dist, angle),
+        }
+
+    @classmethod
+    def get_parameter_prior(cls):
+        return {
+            "min_radius": dist.Uniform(torch.tensor(0.0), torch.tensor(5.0)),
+            "max_radius": dist.Uniform(torch.tensor(0.5), torch.tensor(10.0)),
+            "z_height": dist.Normal(torch.tensor(0.0), torch.tensor(1.0)),
+        }
+
+    @property
+    def parameters(self):
+        return {
+            "min_radius": self.min_radius,
+            "max_radius": self.max_radius,
+            "z_height": self.z_height,
+        }
+
+    @parameters.setter
+    def parameters(self, parameters):
+        self.min_radius = parameters["min_radius"]
+        self.max_radius = parameters["max_radius"]
+        self.z_height = parameters["z_height"]
+
+    def encode_constraint(
+        self, prog, optim_params, parent, child, max_scene_extent_in_any_dir
+    ):
+        # Constrain child to be within [min_radius, max_radius] from parent in XY plane
+        # and at exact z_height
+        min_radius = optim_params["min_radius"]
+        max_radius = optim_params["max_radius"]
+        z_height = optim_params["z_height"]
+
+        xy_offset = child.t_optim[:2] - parent.t_optim[:2]
+        xy_dist_squared = xy_offset[0] ** 2 + xy_offset[1] ** 2
+
+        # Add constraints: min_radius^2 <= x^2 + y^2 <= max_radius^2
+        prog.AddConstraint(xy_dist_squared >= min_radius**2)
+        prog.AddConstraint(xy_dist_squared <= max_radius**2)
+
+        # Constrain z offset
+        prog.AddLinearConstraint(child.t_optim[2] == parent.t_optim[2] + z_height)
+
+    def encode_cost(
+        self, prog, optim_params, active, parent, child, max_scene_extent_in_any_dir
+    ):
+        # Uniform distribution over the annulus area
+        # Area = (angle_range / 2) * (r_max^2 - r_min^2)
+        angle_range = self.angle_max_rad - self.angle_min_rad
+        min_r = optim_params["min_radius"]
+        max_r = optim_params["max_radius"]
+        area = (angle_range / 2.0) * (max_r**2 - min_r**2)
+        log_prob = -torch.log(area)
+        prog.AddLinearCost(-log_prob * active)
+
+
 ## Rotation production rules
 class RotationProductionRule:
     """

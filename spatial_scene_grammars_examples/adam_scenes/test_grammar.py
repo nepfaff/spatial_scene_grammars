@@ -333,7 +333,7 @@ if __name__ == "__main__":
     constraint_list = [
         # Pose constraints (applied per-stage during hierarchical sampling)
         ObjectsOutsideIiwa(radius=0.35),
-        ObjectsWithinArcConstraint(angle_min=-110.0, angle_max=110.0),
+        ObjectsWithinArcConstraint(angle_min=-115.0, angle_max=115.0),
         # Structure constraints (applied during stage 1 container layout)
         MinNumShelvesAndBinsConstraint(min_count=2),
         ShelvesNotInCollisionWithBinsConstraint(),
