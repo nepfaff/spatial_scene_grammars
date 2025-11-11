@@ -12,7 +12,7 @@ from spatial_scene_grammars.drake_interop import *
 from spatial_scene_grammars.nodes import *
 from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.scene_grammar import *
-from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import Shelf
+from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import Shelf, EmptyShelf
 
 """
 Restaurant -> table (1-10) & shelf (0-3)
@@ -104,6 +104,20 @@ class ClutteredBin(RepeatingSetNode):
                 ),  # Bigger values = less variance
             ),
         ]
+
+
+class EmptyClutteredBin(TerminalNode):
+    """Empty bin container - just the bin mesh without any internal objects.
+    Used for stage 1 sampling of container layout."""
+
+    # Copy class variables from ClutteredBin for collision detection
+    bin_dims = torch.tensor([0.45, 0.3, 0.23])
+    KEEPOUT_RADIUS = max(bin_dims[0].item(), bin_dims[1].item()) / 2.0
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=True)
+        geom.register_model_file(torch.eye(4), "package://greg/models/misc/bin/bin.sdf")
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
 
 
 class SteamerBottom(OrNode):
@@ -281,6 +295,33 @@ class SharedStuff(IndependentSetNode):
         ]
 
 
+class FloorObjectsRoot(AndNode):
+    """Wrapper node for floor object sampling that applies CircularOffsetRule to SharedStuff.
+
+    Used in hierarchical multi-stage sampling to ensure SharedStuff objects are placed
+    in the pie region [-110, 110] at radius 0.9m, matching the original AdamScene behavior.
+    """
+    SHARED_STUFF_RADIUS = 0.9  # Match AdamScene radius
+
+    def __init__(self, tf):
+        super().__init__(tf=tf, physics_geometry_info=None, observed=False)
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=SharedStuff,
+                xyz_rule=CircularOffsetRule(
+                    radius=cls.SHARED_STUFF_RADIUS,
+                    z_height=0.0,
+                    angle_min=-110.0,
+                    angle_max=110.0,
+                ),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+
+
 class Bins(RepeatingSetNode):
     def __init__(self, tf):
         super().__init__(
@@ -331,6 +372,60 @@ class Shelves(RepeatingSetNode):
         ]
 
 
+class EmptyShelves(RepeatingSetNode):
+    """RepeatingSetNode for empty shelves (stage 1 container layout)."""
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=None,
+            observed=False,
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.25, max_children=3, start_at_one=False
+            ),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=EmptyShelf,
+                xyz_rule=CircularOffsetRule(
+                    radius=0.86, z_height=0.404394, angle_min=-110.0, angle_max=110.0
+                ),
+                rotation_rule=FaceOriginRotationRule(
+                    target_point=torch.zeros(3), facing_axis="x"
+                ),
+            )
+        ]
+
+
+class EmptyBins(RepeatingSetNode):
+    """RepeatingSetNode for empty bins (stage 1 container layout)."""
+
+    def __init__(self, tf):
+        super().__init__(
+            tf=tf,
+            physics_geometry_info=None,
+            observed=False,
+            rule_probs=RepeatingSetNode.get_geometric_rule_probs(
+                p=0.25, max_children=3, start_at_one=False
+            ),
+        )
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=EmptyClutteredBin,
+                xyz_rule=CircularOffsetRule(
+                    radius=0.6, z_height=0.0, angle_min=-110.0, angle_max=110.0
+                ),
+                rotation_rule=ARBITRARY_YAW_ROTATION_RULE,
+            )
+        ]
+
+
 class AdamScene(AndNode):
     SHARED_STUFF_RADIUS = 0.9  # Radius for SharedStuff placement
 
@@ -363,6 +458,39 @@ class AdamScene(AndNode):
             ),
             ProductionRule(
                 child_type=Bins,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+        ]
+
+
+class Stage1AdamScene(AndNode):
+    """Stage 1 scene for multi-stage sampling: empty bins and shelves only.
+
+    This scene is used in the first stage of hierarchical sampling to determine
+    the layout of empty containers (bins and shelves) before populating them
+    with objects in stage 2.
+    """
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=True)
+        geom.register_model_file(
+            torch.eye(4),
+            "package://greg/models/misc/iiwa_env.dmd.yaml",
+            root_body_name="floor_base",
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+    @classmethod
+    def generate_rules(cls):
+        return [
+            ProductionRule(
+                child_type=EmptyShelves,
+                xyz_rule=SamePositionRule(),
+                rotation_rule=SameRotationRule(),
+            ),
+            ProductionRule(
+                child_type=EmptyBins,
                 xyz_rule=SamePositionRule(),
                 rotation_rule=SameRotationRule(),
             ),
@@ -478,7 +606,10 @@ class MinNumShelvesAndBinsConstraint(StructureConstraint):
     def eval(self, scene_tree):
         shelves = scene_tree.find_nodes_by_type(Shelf)
         bins = scene_tree.find_nodes_by_type(ClutteredBin)
-        total_count = len(shelves) + len(bins)
+        # Also check for empty variants (used in stage 1 sampling)
+        empty_shelves = scene_tree.find_nodes_by_type(EmptyShelf)
+        empty_bins = scene_tree.find_nodes_by_type(EmptyClutteredBin)
+        total_count = len(shelves) + len(bins) + len(empty_shelves) + len(empty_bins)
         return torch.tensor([float(total_count)])
 
 
@@ -493,17 +624,24 @@ class ShelvesNotInCollisionWithBinsConstraint(StructureConstraint):
         )
 
     def eval(self, scene_tree):
+        # Get both populated and empty variants
         shelves = scene_tree.find_nodes_by_type(Shelf)
         bins = scene_tree.find_nodes_by_type(ClutteredBin)
+        empty_shelves = scene_tree.find_nodes_by_type(EmptyShelf)
+        empty_bins = scene_tree.find_nodes_by_type(EmptyClutteredBin)
+
+        # Combine into single lists for collision checking
+        all_shelves = shelves + empty_shelves
+        all_bins = bins + empty_bins
 
         separations = []
 
         # Check shelf-shelf collisions using OBB
-        for i in range(len(shelves)):
-            for j in range(i + 1, len(shelves)):
+        for i in range(len(all_shelves)):
+            for j in range(i + 1, len(all_shelves)):
                 separation = self._check_obb_separation(
-                    shelves[i],
-                    shelves[j],
+                    all_shelves[i],
+                    all_shelves[j],
                     Shelf.WIDTH / 2.0,
                     Shelf.LENGTH / 2.0,
                     Shelf.WIDTH / 2.0,
@@ -512,11 +650,11 @@ class ShelvesNotInCollisionWithBinsConstraint(StructureConstraint):
                 separations.append(separation)
 
         # Check bin-bin collisions using OBB
-        for i in range(len(bins)):
-            for j in range(i + 1, len(bins)):
+        for i in range(len(all_bins)):
+            for j in range(i + 1, len(all_bins)):
                 separation = self._check_obb_separation(
-                    bins[i],
-                    bins[j],
+                    all_bins[i],
+                    all_bins[j],
                     ClutteredBin.bin_dims[0] / 2.0,
                     ClutteredBin.bin_dims[1] / 2.0,
                     ClutteredBin.bin_dims[0] / 2.0,
@@ -525,8 +663,8 @@ class ShelvesNotInCollisionWithBinsConstraint(StructureConstraint):
                 separations.append(separation)
 
         # Check shelf-bin collisions using OBB
-        for shelf in shelves:
-            for bin in bins:
+        for shelf in all_shelves:
+            for bin in all_bins:
                 separation = self._check_obb_separation(
                     shelf,
                     bin,
@@ -637,8 +775,15 @@ class SharedStuffNotInCollisionWithShelvesAndBins(PoseConstraint):
         """Evaluate minimum separation distance between all SharedStuff objects and all Shelves/Bins.
         Returns positive values if separated, negative if overlapping."""
 
+        # Find both populated and empty container variants
         shelves = scene_tree.find_nodes_by_type(Shelf)
         bins = scene_tree.find_nodes_by_type(ClutteredBin)
+        empty_shelves = scene_tree.find_nodes_by_type(EmptyShelf)
+        empty_bins = scene_tree.find_nodes_by_type(EmptyClutteredBin)
+
+        # Combine both types
+        all_shelves = shelves + empty_shelves
+        all_bins = bins + empty_bins
 
         # Collect all tabletop objects that need collision checking
         tabletop_objects = []
@@ -649,29 +794,45 @@ class SharedStuffNotInCollisionWithShelvesAndBins(PoseConstraint):
                     tabletop_objects.append(obj)
 
         # If no tabletop objects or no shelves/bins, constraint is satisfied
-        if len(tabletop_objects) == 0 or (len(shelves) == 0 and len(bins) == 0):
+        if len(tabletop_objects) == 0 or (len(all_shelves) == 0 and len(all_bins) == 0):
             return torch.tensor([[1.0]])
 
         separations = []
 
-        # Check each tabletop object against all shelves
+        # Check each tabletop object against all shelves (both populated and empty)
         for obj in tabletop_objects:
             obj_radius = obj.KEEPOUT_RADIUS
 
-            for shelf in shelves:
+            for shelf in all_shelves:
+                # Use EmptyShelf dimensions if it's an empty shelf, otherwise use Shelf dimensions
+                if isinstance(shelf, EmptyShelf):
+                    shelf_width = EmptyShelf.WIDTH / 2.0
+                    shelf_length = EmptyShelf.LENGTH / 2.0
+                else:
+                    shelf_width = Shelf.WIDTH / 2.0
+                    shelf_length = Shelf.LENGTH / 2.0
+
                 separation = self._check_circle_obb_separation(
                     obj, obj_radius,
-                    shelf, Shelf.WIDTH / 2.0, Shelf.LENGTH / 2.0,
+                    shelf, shelf_width, shelf_length,
                 )
                 separations.append(separation)
 
-            # Check against all bins
-            for bin_node in bins:
+            # Check against all bins (both populated and empty)
+            for bin_node in all_bins:
+                # Use EmptyClutteredBin dimensions if it's an empty bin, otherwise use ClutteredBin dimensions
+                if isinstance(bin_node, EmptyClutteredBin):
+                    bin_half_x = EmptyClutteredBin.bin_dims[0] / 2.0
+                    bin_half_y = EmptyClutteredBin.bin_dims[1] / 2.0
+                else:
+                    bin_half_x = ClutteredBin.bin_dims[0] / 2.0
+                    bin_half_y = ClutteredBin.bin_dims[1] / 2.0
+
                 separation = self._check_circle_obb_separation(
                     obj, obj_radius,
                     bin_node,
-                    ClutteredBin.bin_dims[0] / 2.0,  # X half-extent
-                    ClutteredBin.bin_dims[1] / 2.0,  # Y half-extent
+                    bin_half_x,  # X half-extent
+                    bin_half_y,  # Y half-extent
                 )
                 separations.append(separation)
 

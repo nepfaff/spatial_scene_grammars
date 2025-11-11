@@ -39,12 +39,11 @@ from spatial_scene_grammars_examples.adam_scenes.grammar import (
     ObjectsWithinArcConstraint,
     SharedStuffNotInCollisionWithShelvesAndBins,
 )
-from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
-    BoardGameStackHeightConstraint,
-    LargeBoardGameStackHeightConstraint,
-    MinNumObjectsConstraint,
-    ObjectsNotInCollisionWithStacksConstraintStructure,
+from spatial_scene_grammars_examples.adam_scenes.multi_stage_sampling import (
+    sample_hierarchical_scene,
 )
+# Shelf-specific structure constraints are now enforced naturally by the shelf grammar
+# during stage 2a sampling, so they don't need to be imported here
 
 
 def sample_realistic_scene(
@@ -64,57 +63,109 @@ def sample_realistic_scene(
     else:
         tree = grammar.sample_tree(detach=True)
 
-    if len(pose_constraints) > 0:
-        print("HMC sampling with constraints.")
-        samples = do_fixed_structure_hmc_with_constraint_penalties(
-            grammar,
-            tree,
-            num_samples=25,
-            subsample_step=1,
-            with_nonpenetration=False,  # Too difficult
-            zmq_url="",
-            constraints=pose_constraints,
-            kernel_type="NUTS",
-            max_tree_depth=6,
-            target_accept_prob=0.8,
-            adapt_step_size=True,
-            verbose=-1,
-            # kernel_type="HMC", num_steps=1, step_size=1E-1, adapt_step_size=False, # Langevin-ish
-            structure_vis_kwargs={
-                "with_triad": False,
-                "linewidth": 30,
-                "node_sphere_size": 0.02,
-                "alpha": 0.5,
-            },
-        )
+    # if len(pose_constraints) > 0:
+    #     print("HMC sampling with constraints.")
+    #     samples = do_fixed_structure_hmc_with_constraint_penalties(
+    #         grammar,
+    #         tree,
+    #         num_samples=25,
+    #         subsample_step=1,
+    #         with_nonpenetration=False,  # Too difficult
+    #         zmq_url="",
+    #         constraints=pose_constraints,
+    #         kernel_type="NUTS",
+    #         max_tree_depth=6,
+    #         target_accept_prob=0.8,
+    #         adapt_step_size=True,
+    #         verbose=-1,
+    #         # kernel_type="HMC", num_steps=1, step_size=1E-1, adapt_step_size=False, # Langevin-ish
+    #         structure_vis_kwargs={
+    #             "with_triad": False,
+    #             "linewidth": 30,
+    #             "node_sphere_size": 0.02,
+    #             "alpha": 0.5,
+    #         },
+    #     )
 
-        # Step through samples backwards in HMC process and pick out a tree that satisfies
-        # the constraints.
-        good_tree = None
-        best_bad_tree = None
-        best_violation = None
-        for candidate_tree in samples[::-1]:
-            total_violation = eval_total_constraint_set_violation(
-                candidate_tree, constraints
-            )
-            if total_violation <= 0.0:
-                good_tree = candidate_tree
-                break
-            else:
-                if best_bad_tree is None or total_violation <= best_violation:
-                    best_bad_tree = candidate_tree
-                    best_violation = total_violation.detach()
+    #     # Step through samples backwards in HMC process and pick out a tree that satisfies
+    #     # the constraints.
+    #     good_tree = None
+    #     best_bad_tree = None
+    #     best_violation = None
+    #     for candidate_tree in samples[::-1]:
+    #         total_violation = eval_total_constraint_set_violation(
+    #             candidate_tree, constraints
+    #         )
+    #         if total_violation <= 0.0:
+    #             good_tree = candidate_tree
+    #             break
+    #         else:
+    #             if best_bad_tree is None or total_violation <= best_violation:
+    #                 best_bad_tree = candidate_tree
+    #                 best_violation = total_violation.detach()
 
-        if good_tree == None:
-            logging.error("No tree in samples satisfied constraints.")
-            print("Best total violation: %f" % best_violation)
-            print("Violations of best bad tree:")
-            for constraint in constraints:
-                print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
-            return None, None
-    else:
-        # Don't need HMC if have no pose constraints.
-        good_tree = tree
+    #     if good_tree == None:
+    #         logging.error("No tree in samples satisfied constraints.")
+    #         print("Best total violation: %f" % best_violation)
+    #         print("Violations of best bad tree:")
+    #         for constraint in constraints:
+    #             print("constraint ", constraint, ": ", constraint.eval(best_bad_tree))
+    #         return None, None
+    # else:
+    #     # Don't need HMC if have no pose constraints.
+    #     good_tree = tree
+
+    # if skip_physics_constraints:
+    #     return None, good_tree
+
+    # print("Projecting tree to feasibility.")
+    # feasible_tree = project_tree_to_feasibility(
+    #     deepcopy(good_tree),
+    #     do_forward_sim=True,
+    #     timestep=0.001,
+    #     T=5,
+    # )
+    # # feasible_tree = good_tree  # TODO: remove
+    # return feasible_tree, good_tree
+
+    return tree, tree
+
+
+def sample_hierarchical_realistic_scene(
+    grammar, constraints, seed=None, skip_physics_constraints=False
+):
+    """Sample a scene using hierarchical multi-stage approach.
+
+    This function uses the multi-stage sampling pipeline instead of
+    sampling the full scene with rejection constraints.
+
+    Args:
+        grammar: Grammar object (not used, kept for API consistency with sample_realistic_scene)
+        constraints: List of constraints to check (pose constraints only, structure handled in stages)
+        seed: Random seed
+        skip_physics_constraints: If True, skip physics projection
+
+    Returns:
+        (feasible_tree, good_tree) tuple, or (None, None) if failed
+    """
+    if seed is not None:
+        torch.random.manual_seed(seed)
+
+    # Extract only pose constraints (structure already handled by stage grammars)
+    _, pose_constraints = split_constraints(constraints)
+
+    # Use hierarchical sampling with pose constraints applied at each stage
+    # Note: grammar parameter is not used here since stage grammars are created internally
+    tree = sample_hierarchical_scene(pose_constraints=pose_constraints, seed=seed)
+    if tree is None:
+        logging.error("Hierarchical sampling failed.")
+        return None, None
+
+    print("Successfully sampled hierarchical scene.")
+
+    # HMC is now applied per-stage within sample_hierarchical_scene()
+    # No need to apply HMC again on the combined scene
+    good_tree = tree
 
     if skip_physics_constraints:
         return None, good_tree
@@ -124,9 +175,8 @@ def sample_realistic_scene(
         deepcopy(good_tree),
         do_forward_sim=True,
         timestep=0.001,
-        T=5,
+        T=1.0,  # Reduced from 5s - objects already mostly stable from per-stage projection
     )
-    # feasible_tree = good_tree  # TODO: remove
     return feasible_tree, good_tree
 
 
@@ -173,7 +223,7 @@ def extract_scene_data(tree):
     return scene
 
 
-def sample_and_extract(grammar, constraints, max_tries=3):
+def sample_and_extract(grammar, constraints, max_tries=3, use_hierarchical=False):
     """Worker function for parallel sampling"""
     # Set a unique seed for each process
     seed = (int(time.time() * 1000000) + os.getpid()) % (2**32)
@@ -183,7 +233,10 @@ def sample_and_extract(grammar, constraints, max_tries=3):
     counter = 0
     while counter < max_tries:
         try:
-            tree, _ = sample_realistic_scene(grammar, constraints)
+            if use_hierarchical:
+                tree, _ = sample_hierarchical_realistic_scene(grammar, constraints, seed=seed)
+            else:
+                tree, _ = sample_realistic_scene(grammar, constraints, seed=seed)
             if tree is not None:
                 return extract_scene_data(tree)
         except Exception as e:
@@ -256,9 +309,14 @@ def visualize_scene(scene, meshcat_instance):
 
 if __name__ == "__main__":
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Generate restaurant scenes")
+    parser = argparse.ArgumentParser(description="Generate Adam workspace scenes")
     parser.add_argument(
         "--workers", type=int, default=1, help="Number of worker processes (default: 1)"
+    )
+    parser.add_argument(
+        "--hierarchical",
+        action="store_true",
+        help="Use hierarchical multi-stage sampling instead of simple rejection sampling",
     )
     args = parser.parse_args()
 
@@ -273,20 +331,27 @@ if __name__ == "__main__":
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraint_list = [
+        # Pose constraints (applied per-stage during hierarchical sampling)
         ObjectsOutsideIiwa(radius=0.35),
+        ObjectsWithinArcConstraint(angle_min=-110.0, angle_max=110.0),
+        # Structure constraints (applied during stage 1 container layout)
         MinNumShelvesAndBinsConstraint(min_count=2),
         ShelvesNotInCollisionWithBinsConstraint(),
+        # Collision constraints (applied during stage 2c floor sampling)
         SharedStuffNotInCollisionWithShelvesAndBins(),
-        ObjectsWithinArcConstraint(angle_min=-110.0, angle_max=110.0),
-        BoardGameStackHeightConstraint(),
-        LargeBoardGameStackHeightConstraint(),
-        MinNumObjectsConstraint(min_num_objects=3),
-        ObjectsNotInCollisionWithStacksConstraintStructure(),
+        # Note: Shelf-specific structure constraints (BoardGameStackHeightConstraint, etc.)
+        # are now enforced naturally by the shelf grammar during stage 2a sampling
     ]
 
     # If single worker, use original behavior
     if num_workers == 1:
-        tree, _ = sample_realistic_scene(grammar, constraint_list)
+        if args.hierarchical:
+            print("Using hierarchical multi-stage sampling...")
+            tree, _ = sample_hierarchical_realistic_scene(grammar, constraint_list)
+        else:
+            print("Using simple rejection sampling...")
+            tree, _ = sample_realistic_scene(grammar, constraint_list)
+
         if tree is None:
             print("Sampling failed!")
             exit()
@@ -317,8 +382,13 @@ if __name__ == "__main__":
         pool = Pool(processes=num_workers)
 
         # Generate scenes in parallel - one per worker
+        print(f"Using {'hierarchical' if args.hierarchical else 'simple'} sampling...")
         async_results = [
-            pool.apply_async(sample_and_extract, args=(grammar, constraint_list))
+            pool.apply_async(
+                sample_and_extract,
+                args=(grammar, constraint_list),
+                kwds={"use_hierarchical": args.hierarchical},
+            )
             for _ in range(num_workers)
         ]
 

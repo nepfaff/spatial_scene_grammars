@@ -125,6 +125,25 @@ class Shelf(AndNode):
         ]
 
 
+class EmptyShelf(TerminalNode):
+    """Empty shelf - just the shelf mesh without any shelf layer objects.
+    Used for stage 1 sampling of container layout."""
+
+    # Copy class variables from Shelf for collision detection
+    WIDTH = 0.3  # x-coordinate
+    LENGTH = 0.6  # y-coordinate
+    HEIGHT = 0.783  # z-coordinate
+    KEEPOUT_RADIUS = max(WIDTH, LENGTH) / 2.0
+
+    def __init__(self, tf):
+        geom = PhysicsGeometryInfo(fixed=True)
+        geom_tf = torch.eye(4)
+        geom.register_model_file(
+            geom_tf, "package://tri/drake_models/shelves.sdf"
+        )
+        super().__init__(tf=tf, physics_geometry_info=geom, observed=True)
+
+
 class TopShelfSettingOrLargeBoardGame(OrNode):
     def __init__(self, tf):
         super().__init__(
