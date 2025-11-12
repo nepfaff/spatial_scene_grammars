@@ -9,6 +9,9 @@ from copy import deepcopy
 import numpy as np
 import torch
 
+# Enable INFO level logging to see multi-stage sampling progress messages
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+
 torch.set_default_dtype(torch.double)
 
 from pydrake.all import (

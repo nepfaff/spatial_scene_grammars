@@ -9,6 +9,7 @@ This approach is more efficient for dataset generation than sampling the full sc
 with rejection constraints.
 """
 
+import logging
 import torch
 import numpy as np
 from copy import deepcopy
@@ -88,12 +89,12 @@ def sample_stage1_layout(seed=None, max_attempts=5000):
     )
 
     if not success:
-        print(
+        logging.info(
             f"[Stage 1] Failed to sample container layout after {max_attempts} attempts"
         )
         return None
 
-    print(f"[Stage 1] Successfully sampled container layout")
+    logging.info(f"[Stage 1] Successfully sampled container layout")
     return tree
 
 
@@ -134,16 +135,16 @@ def sample_shelf_contents(shelf_pose, seed=None, max_projection_attempts=50):
         )
 
         if not constraints_satisfied:
-            print(f"[Stage 2a] Warning: Could not satisfy all shelf constraints (attempt {attempt+1}/{max_projection_attempts}), re-sampling...")
+            logging.info(f"[Stage 2a] Warning: Could not satisfy all shelf constraints (attempt {attempt+1}/{max_projection_attempts}), re-sampling...")
             continue
 
         # Check if shelf has any movable objects (not just Null nodes)
         if not _has_movable_objects(tree):
-            print(f"[Stage 2a] Shelf contains only Null nodes, skipping projection")
+            logging.info(f"[Stage 2a] Shelf contains only Null nodes, skipping projection")
             return tree
 
         # Project shelf contents to physical feasibility
-        print(f"[Stage 2a] Projecting shelf contents to feasibility (attempt {attempt+1}/{max_projection_attempts})...")
+        logging.info(f"[Stage 2a] Projecting shelf contents to feasibility (attempt {attempt+1}/{max_projection_attempts})...")
         projected_tree = project_tree_to_feasibility(
             deepcopy(tree),
             do_forward_sim=True,
@@ -153,22 +154,22 @@ def sample_shelf_contents(shelf_pose, seed=None, max_projection_attempts=50):
         )
 
         if projected_tree is not None:
-            print(f"[Stage 2a] Shelf projection successful, filtering objects...")
+            logging.info(f"[Stage 2a] Shelf projection successful, filtering objects...")
 
             # Filter objects with bad poses (flew away, tipped over, etc.)
             filtered_tree = _filter_shelf_objects(projected_tree, min_objects=3)
 
             if filtered_tree is not None:
-                print(f"[Stage 2a] Shelf filtering successful")
+                logging.info(f"[Stage 2a] Shelf filtering successful")
                 return filtered_tree
             else:
-                print(f"[Stage 2a] Shelf filtering failed (too few valid objects), re-sampling...")
+                logging.info(f"[Stage 2a] Shelf filtering failed (too few valid objects), re-sampling...")
                 continue
         else:
-            print(f"[Stage 2a] Shelf projection failed, re-sampling...")
+            logging.info(f"[Stage 2a] Shelf projection failed, re-sampling...")
 
     # If all attempts failed, return last unprojected tree
-    print(f"[Stage 2a] WARNING: All {max_projection_attempts} projection attempts failed, using unprojected tree")
+    logging.info(f"[Stage 2a] WARNING: All {max_projection_attempts} projection attempts failed, using unprojected tree")
     return tree
 
 
@@ -219,7 +220,7 @@ def _filter_shelf_objects(tree, min_objects=3):
         # Check translation threshold (objects shouldn't fly away)
         translation = np.array(node.translation)
         if np.any(np.abs(translation) > 5.0):
-            print(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
+            logging.info(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
             continue
 
         # Check orientation for upright objects
@@ -229,14 +230,14 @@ def _filter_shelf_objects(tree, min_objects=3):
 
             # Should have close to zero roll and pitch
             if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
-                print(f"[Filter] Removing {node.__class__.__name__} due to bad orientation: {local_z_axis}")
+                logging.info(f"[Filter] Removing {node.__class__.__name__} due to bad orientation: {local_z_axis}")
                 continue
 
         filtered_nodes.append(node)
 
     # Check minimum object count
     if len(filtered_nodes) < min_objects:
-        print(f"[Filter] Only {len(filtered_nodes)} valid shelf objects, need at least {min_objects}")
+        logging.info(f"[Filter] Only {len(filtered_nodes)} valid shelf objects, need at least {min_objects}")
         return None
 
     # Reconstruct filtered tree
@@ -249,7 +250,7 @@ def _filter_shelf_objects(tree, min_objects=3):
         if parent in filtered_tree.nodes and child in filtered_tree.nodes:
             filtered_tree.add_edge(parent, child)
 
-    print(f"[Filter] Shelf filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
+    logging.info(f"[Filter] Shelf filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
     return filtered_tree
 
 
@@ -282,13 +283,13 @@ def _filter_floor_objects(tree, min_objects=2):
         # Check translation threshold (objects shouldn't fly away)
         translation = np.array(node.translation)
         if np.any(np.abs(translation) > 8.0):
-            print(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
+            logging.info(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
             continue
 
         # Check z-height (objects should be on floor, not fallen through or floating)
         z = translation[2]
         if z < -0.1 or z > 0.5:
-            print(f"[Filter] Removing {node.__class__.__name__} due to bad z-height: {z}")
+            logging.info(f"[Filter] Removing {node.__class__.__name__} due to bad z-height: {z}")
             continue
 
         # Check orientation for upright floor objects (teacups and teapots)
@@ -298,14 +299,14 @@ def _filter_floor_objects(tree, min_objects=2):
 
             # Should have close to zero roll and pitch
             if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
-                print(f"[Filter] Removing {node.__class__.__name__} due to bad orientation: {local_z_axis}")
+                logging.info(f"[Filter] Removing {node.__class__.__name__} due to bad orientation: {local_z_axis}")
                 continue
 
         filtered_nodes.append(node)
 
     # Check minimum object count
     if len(filtered_nodes) < min_objects:
-        print(f"[Filter] Only {len(filtered_nodes)} valid floor objects, need at least {min_objects}")
+        logging.info(f"[Filter] Only {len(filtered_nodes)} valid floor objects, need at least {min_objects}")
         return None
 
     # Reconstruct filtered tree
@@ -317,7 +318,7 @@ def _filter_floor_objects(tree, min_objects=2):
         if parent in filtered_tree.nodes and child in filtered_tree.nodes:
             filtered_tree.add_edge(parent, child)
 
-    print(f"[Filter] Floor filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
+    logging.info(f"[Filter] Floor filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
     return filtered_tree
 
 
@@ -348,13 +349,13 @@ def _filter_bin_objects(tree, min_objects=2):
 
         # Check XY translation threshold (objects shouldn't fly away)
         if np.any(np.abs(translation) > 5.0):
-            print(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
+            logging.info(f"[Filter] Removing {node.__class__.__name__} due to excessive translation: {translation}")
             continue
 
         # Check z-height (objects shouldn't fall through bin floor)
         z = translation[2]
         if z < -0.1:
-            print(f"[Filter] Removing {node.__class__.__name__} due to falling through bin floor: z={z}")
+            logging.info(f"[Filter] Removing {node.__class__.__name__} due to falling through bin floor: z={z}")
             continue
 
         # NO orientation checks - bins allow arbitrary rotations
@@ -363,7 +364,7 @@ def _filter_bin_objects(tree, min_objects=2):
 
     # Check minimum object count (bin + at least 1 object)
     if len(filtered_nodes) < min_objects:
-        print(f"[Filter] Only {len(filtered_nodes)} valid bin objects, need at least {min_objects}")
+        logging.info(f"[Filter] Only {len(filtered_nodes)} valid bin objects, need at least {min_objects}")
         return None
 
     # Reconstruct filtered tree
@@ -375,7 +376,7 @@ def _filter_bin_objects(tree, min_objects=2):
         if parent in filtered_tree.nodes and child in filtered_tree.nodes:
             filtered_tree.add_edge(parent, child)
 
-    print(f"[Filter] Bin filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
+    logging.info(f"[Filter] Bin filtering: {len(filtered_nodes)} valid objects (removed {len([n for n in tree.nodes if n.observed]) - len(filtered_nodes)})")
     return filtered_tree
 
 
@@ -405,11 +406,11 @@ def sample_bin_contents(bin_pose, seed=None, max_projection_attempts=50):
 
         # Check if bin has any movable objects (not just Null nodes)
         if not _has_movable_objects(tree):
-            print(f"[Stage 2b] Bin contains only Null nodes, skipping projection")
+            logging.info(f"[Stage 2b] Bin contains only Null nodes, skipping projection")
             return tree
 
         # Project bin contents to physical feasibility
-        print(f"[Stage 2b] Projecting bin contents to feasibility (attempt {attempt+1}/{max_projection_attempts})...")
+        logging.info(f"[Stage 2b] Projecting bin contents to feasibility (attempt {attempt+1}/{max_projection_attempts})...")
         projected_tree = project_tree_to_feasibility(
             deepcopy(tree),
             do_forward_sim=True,
@@ -419,22 +420,22 @@ def sample_bin_contents(bin_pose, seed=None, max_projection_attempts=50):
         )
 
         if projected_tree is not None:
-            print(f"[Stage 2b] Bin projection successful, filtering objects...")
+            logging.info(f"[Stage 2b] Bin projection successful, filtering objects...")
 
             # Filter objects with bad poses (flew away, fell through floor, etc.)
             filtered_tree = _filter_bin_objects(projected_tree, min_objects=2)
 
             if filtered_tree is not None:
-                print(f"[Stage 2b] Bin filtering successful")
+                logging.info(f"[Stage 2b] Bin filtering successful")
                 return filtered_tree
             else:
-                print(f"[Stage 2b] Bin filtering failed (too few valid objects), re-sampling...")
+                logging.info(f"[Stage 2b] Bin filtering failed (too few valid objects), re-sampling...")
                 continue
         else:
-            print(f"[Stage 2b] Bin projection failed, re-sampling...")
+            logging.info(f"[Stage 2b] Bin projection failed, re-sampling...")
 
     # If all attempts failed, return last unprojected tree
-    print(f"[Stage 2b] WARNING: All {max_projection_attempts} projection attempts failed, using unprojected tree")
+    logging.info(f"[Stage 2b] WARNING: All {max_projection_attempts} projection attempts failed, using unprojected tree")
     return tree
 
 
@@ -469,7 +470,7 @@ def sample_floor_objects(stage1_tree, bin_poses, shelf_poses, pose_constraints=N
 
     # Retry entire sampling + projection process if projection fails
     for projection_attempt in range(max_projection_attempts):
-        print(f"[Stage 2c] Floor sampling attempt {projection_attempt+1}/{max_projection_attempts}")
+        logging.info(f"[Stage 2c] Floor sampling attempt {projection_attempt+1}/{max_projection_attempts}")
 
         # Create temporary scene tree with fixed obstacles for constraint checking
         # We'll sample floor objects with collision checking, then return just the floor objects
@@ -516,16 +517,16 @@ def sample_floor_objects(stage1_tree, bin_poses, shelf_poses, pose_constraints=N
             result = sample_with_obstacle_checking()
             if result is not None:
                 floor_tree = result
-                print(f"[Stage 2c] Sampled collision-free floor objects (attempt {attempt+1})")
+                logging.info(f"[Stage 2c] Sampled collision-free floor objects (attempt {attempt+1})")
                 break
 
         if floor_tree is None:
-            print(f"[Stage 2c] Failed to sample collision-free floor objects after {max_attempts_collision} attempts")
+            logging.info(f"[Stage 2c] Failed to sample collision-free floor objects after {max_attempts_collision} attempts")
             floor_tree = floor_grammar.sample_tree(detach=True)  # Fallback without collision checking
 
         # Apply HMC with pose constraints if any
         if len(pose_constraints) > 0:
-            print(f"[Stage 2c] Applying HMC with {len(pose_constraints)} pose constraints...")
+            logging.info(f"[Stage 2c] Applying HMC with {len(pose_constraints)} pose constraints...")
 
             # Try HMC multiple times since it might not always converge
             for hmc_attempt in range(max_attempts_hmc):
@@ -559,7 +560,7 @@ def sample_floor_objects(stage1_tree, bin_poses, shelf_poses, pose_constraints=N
                         break
 
                 if good_tree is not None:
-                    print(f"[Stage 2c] HMC succeeded (attempt {hmc_attempt+1})")
+                    logging.info(f"[Stage 2c] HMC succeeded (attempt {hmc_attempt+1})")
                     floor_tree = good_tree
                     break
                 else:
@@ -569,10 +570,10 @@ def sample_floor_objects(stage1_tree, bin_poses, shelf_poses, pose_constraints=N
                         floor_tree = new_sample
                     # Otherwise keep the current floor_tree and retry
             else:
-                print(f"[Stage 2c] HMC failed after {max_attempts_hmc} attempts, proceeding to projection")
+                logging.info(f"[Stage 2c] HMC failed after {max_attempts_hmc} attempts, proceeding to projection")
 
         # Project floor objects to physical feasibility with bins/shelves as obstacles
-        print(f"[Stage 2c] Projecting floor objects to feasibility with obstacles...")
+        logging.info(f"[Stage 2c] Projecting floor objects to feasibility with obstacles...")
 
         # Create temporary tree with scene root (includes floor geometry) + floor objects + empty containers
         temp_tree_for_projection = SceneTree()
@@ -622,26 +623,26 @@ def sample_floor_objects(stage1_tree, bin_poses, shelf_poses, pose_constraints=N
                 for child in projected_tree.get_children(shared_stuff_node):
                     _add_subtree_recursive(final_floor_tree, shared_stuff_node, child, projected_tree)
 
-                print(f"[Stage 2c] Floor projection successful, filtering objects...")
+                logging.info(f"[Stage 2c] Floor projection successful, filtering objects...")
 
                 # Filter objects with bad poses (flew away, fell through floor, tipped over, etc.)
                 filtered_floor_tree = _filter_floor_objects(final_floor_tree, min_objects=2)
 
                 if filtered_floor_tree is not None:
-                    print(f"[Stage 2c] Floor filtering successful")
+                    logging.info(f"[Stage 2c] Floor filtering successful")
                     return filtered_floor_tree
                 else:
-                    print(f"[Stage 2c] Floor filtering failed (too few valid objects), re-sampling...")
+                    logging.info(f"[Stage 2c] Floor filtering failed (too few valid objects), re-sampling...")
                     continue
             else:
-                print(f"[Stage 2c] WARNING: Could not find SharedStuff in projected tree, re-sampling...")
+                logging.info(f"[Stage 2c] WARNING: Could not find SharedStuff in projected tree, re-sampling...")
                 # Continue to next projection attempt
         else:
-            print(f"[Stage 2c] Floor projection failed, re-sampling...")
+            logging.info(f"[Stage 2c] Floor projection failed, re-sampling...")
             # Continue to next projection attempt
 
     # If all projection attempts failed, return last unprojected tree
-    print(f"[Stage 2c] WARNING: All {max_projection_attempts} floor projection attempts failed, using unprojected tree")
+    logging.info(f"[Stage 2c] WARNING: All {max_projection_attempts} floor projection attempts failed, using unprojected tree")
     return floor_tree
 
 
@@ -715,14 +716,14 @@ def combine_trees(stage1_tree, shelf_contents_dict, bin_contents_dict, floor_tre
 
     # Add floor objects to scene root
     if floor_tree is None:
-        print("[Stage 3] WARNING: floor_tree is None, skipping floor objects")
+        logging.info("[Stage 3] WARNING: floor_tree is None, skipping floor objects")
     else:
         floor_root = floor_tree.get_root()
         scene_root = combined_tree.get_root()
         for child in floor_tree.get_children(floor_root):
             _add_subtree_recursive(combined_tree, scene_root, child, floor_tree)
 
-    print(f"[Stage 3] Combined all trees: {len(combined_tree.nodes)} total nodes")
+    logging.info(f"[Stage 3] Combined all trees: {len(combined_tree.nodes)} total nodes")
     return combined_tree
 
 
@@ -760,19 +761,19 @@ def sample_hierarchical_scene(pose_constraints=None, seed=None):
     empty_bins = stage1_tree.find_nodes_by_type(EmptyClutteredBin)
     empty_shelves = stage1_tree.find_nodes_by_type(EmptyShelf)
 
-    print(f"[Stage 1] Found {len(empty_bins)} bins and {len(empty_shelves)} shelves")
+    logging.info(f"[Stage 1] Found {len(empty_bins)} bins and {len(empty_shelves)} shelves")
 
     # Stage 2a: Sample contents for each shelf SEQUENTIALLY (no parallelism)
     shelf_contents = {}
     for i, empty_shelf in enumerate(empty_shelves):
-        print(f"[Stage 2a] Sampling shelf {i+1}/{len(empty_shelves)} contents...")
+        logging.info(f"[Stage 2a] Sampling shelf {i+1}/{len(empty_shelves)} contents...")
         shelf_tree = sample_shelf_contents(empty_shelf.tf)
         shelf_contents[empty_shelf] = shelf_tree
 
     # Stage 2b: Sample contents for each bin SEQUENTIALLY
     bin_contents = {}
     for i, empty_bin in enumerate(empty_bins):
-        print(f"[Stage 2b] Sampling bin {i+1}/{len(empty_bins)} contents...")
+        logging.info(f"[Stage 2b] Sampling bin {i+1}/{len(empty_bins)} contents...")
         bin_tree = sample_bin_contents(empty_bin.tf)
         bin_contents[empty_bin] = bin_tree
 
@@ -789,5 +790,5 @@ def sample_hierarchical_scene(pose_constraints=None, seed=None):
     # Stage 3: Combine all trees
     final_tree = combine_trees(stage1_tree, shelf_contents, bin_contents, floor_tree)
 
-    print(f"[Hierarchical Sampling] Complete!")
+    logging.info(f"[Hierarchical Sampling] Complete!")
     return final_tree

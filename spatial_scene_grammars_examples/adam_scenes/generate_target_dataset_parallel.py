@@ -7,31 +7,19 @@ import multiprocessing as mp
 import os
 import pickle
 import time
-import uuid
 import tempfile
-from multiprocessing import Pool, Lock
+from multiprocessing import Pool
 import fcntl
-from pathlib import Path
+import warnings
+from copy import deepcopy
+from datetime import timedelta
+from typing import List
 
 import numpy as np
 import torch
 from tqdm import tqdm
 
 torch.set_default_dtype(torch.double)
-import argparse
-import os
-import pickle
-import warnings
-from copy import deepcopy
-from datetime import timedelta
-from functools import partial
-from typing import List
-
-import numpy as np
-from scipy.spatial.transform import Rotation as rot
-from tqdm import tqdm
-
-import spatial_scene_grammars_examples
 from spatial_scene_grammars.constraints import *
 from spatial_scene_grammars.dataset import *
 from spatial_scene_grammars.drake_interop import PhysicsGeometryInfo
@@ -43,18 +31,16 @@ from spatial_scene_grammars.rules import *
 from spatial_scene_grammars.sampling import *
 from spatial_scene_grammars.scene_grammar import *
 from spatial_scene_grammars.visualization import *
-from spatial_scene_grammars_examples.dimsum_restaurant.grammar import (
-    ObjectOnTableSpacingConstraint,
-    ObjectsOnTableConstraint,
-    Restaurant,
-    TallStackConstraint,
-    TablesChairsAndShelvesNotInCollisionConstraint,
+from spatial_scene_grammars_examples.adam_scenes.grammar import (
+    AdamScene,
+    ObjectsOutsideIiwa,
+    MinNumShelvesAndBinsConstraint,
+    ShelvesNotInCollisionWithBinsConstraint,
+    ObjectsWithinArcConstraint,
+    SharedStuffNotInCollisionWithShelvesAndBins,
 )
-from spatial_scene_grammars_examples.tri_living_room_shelf.grammar import (
-    BoardGameStackHeightConstraint,
-    LargeBoardGameStackHeightConstraint,
-    MinNumObjectsConstraint,
-    ObjectsNotInCollisionWithStacksConstraintStructure,
+from spatial_scene_grammars_examples.adam_scenes.multi_stage_sampling import (
+    sample_hierarchical_scene,
 )
 
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -65,7 +51,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 torch.set_num_threads(1)
 
 
-def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
+def extract_tree(tree: SceneTree) -> List[dict]:
     """
     Function for extracting a dataset to make it independent of the
     `spatial_scene_grammars` library.
@@ -74,66 +60,13 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     - "transform": The 4x4 transformation matrix of the object.
     - "model_path": The path to the object's model.
 
-    Optionally also filters the dataset for failure cases:
-
-    Considered failure cases are:
-    - Shared objects with non-zero rotations about the roll and pitch axes
-    - Shared objects with too high z-translation
-
-    Only the affected object is removed. The scene is removed if removing the object
-    leads to fewer than 3 objects remaining.
-
-    Note that the entire scene is removed if a main plate/ bowl does't have close to
-    zero translation and roll/pitch.
-
-    Shared objects are:
-    - SharedPlate
-    - SharedBowl
-    - CerealBox
-    - Jug
+    Note: Filtering for failure cases is now handled by the hierarchical sampling
+    pipeline, so this function only does the extraction.
     """
     observed_nodes: List[Node] = tree.get_observed_nodes()
 
-    filtered_observed_nodes = None
-    if filter:
-        filtered_nodes = []
-        for node in observed_nodes:
-            translation = np.array(node.translation)
-
-            # Remove nodes with translation above 8m in any direction.
-            if np.any(np.abs(translation) > 8):
-                continue
-
-            objects = (
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.Lamp,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.BigBowl,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.StandingEatToLiveBook,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.StackingRing,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.ToyTrain,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.CokeCan,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.TeaBottle,
-                spatial_scene_grammars_examples.tri_living_room_shelf.grammar.JBLSpeaker,
-            )
-            if isinstance(node, objects):
-                # Extract the local z-axis of the object's rotation matrix.
-                local_z_axis = np.array(node.rotation) @ np.array([0, 0, 1])
-
-                # Should have close to zero roll and pitch.
-                if not np.allclose(local_z_axis, [0, 0, 1], atol=1e-2):
-                    continue
-
-            filtered_nodes.append(node)
-
-        # Keep all scenes with more than 5 objects.
-        if len(filtered_nodes) >= 5:
-            filtered_observed_nodes = filtered_nodes
-        else:
-            return None
-    else:
-        filtered_observed_nodes = observed_nodes
-
     data: List[dict] = []
-    for node in filtered_observed_nodes:
+    for node in observed_nodes:
         translation = node.translation
         rotation = node.rotation
         geometry_info: PhysicsGeometryInfo = node.physics_geometry_info
@@ -165,66 +98,39 @@ def extract_tree(tree: SceneTree, filter: bool) -> List[dict] | None:
     return data
 
 
-def sample_realistic_scene(
+def sample_hierarchical_realistic_scene(
     grammar, constraints, seed=None, skip_physics_constraints=False
 ):
-    """
-    Sample a realistic scene from the given grammar and constraints.
-    Optionally skip physics constraints.
+    """Sample a scene using hierarchical multi-stage approach.
 
-    Attempts to first sample a tree structure that meets structure constraints.
-    Then it samples poses (HMC-based) that meet pose constraints.
-    Finally, it tries to project the solution to feasibility using Drake's physical sim.
+    This function uses the multi-stage sampling pipeline instead of
+    sampling the full scene with rejection constraints.
+
+    Args:
+        grammar: Grammar object (not used, kept for API consistency)
+        constraints: List of constraints to check (pose constraints only, structure handled in stages)
+        seed: Random seed
+        skip_physics_constraints: If True, skip physics projection
+
+    Returns:
+        (feasible_tree, good_tree) tuple, or (None, None) if failed
     """
     if seed is not None:
         torch.random.manual_seed(seed)
-    structure_constraints, pose_constraints = split_constraints(constraints)
-    if len(structure_constraints) > 0:
-        tree, success = rejection_sample_under_constraints(
-            grammar, structure_constraints, 5000, detach=True, verbose=-1
-        )
-        if not success:
-            return None, None
-    else:
-        tree = grammar.sample_tree(detach=True)
 
-    if len(pose_constraints) > 0:
-        samples = do_fixed_structure_hmc_with_constraint_penalties(
-            grammar,
-            tree,
-            num_samples=25,
-            subsample_step=1,
-            with_nonpenetration=False,
-            zmq_url="",
-            constraints=pose_constraints,
-            kernel_type="NUTS",
-            max_tree_depth=6,
-            target_accept_prob=0.8,
-            adapt_step_size=True,
-            verbose=-1,
-        )
+    # Extract only pose constraints (structure already handled by stage grammars)
+    _, pose_constraints = split_constraints(constraints)
 
-        # Check samples for constraint satisfaction
-        good_tree = None
-        best_bad_tree = None
-        best_violation = None
-        for candidate_tree in samples[::-1]:
-            total_violation = eval_total_constraint_set_violation(
-                candidate_tree, constraints
-            )
-            if total_violation <= 0.0:
-                good_tree = candidate_tree
-                break
-            else:
-                if best_bad_tree is None or total_violation <= best_violation:
-                    best_bad_tree = candidate_tree
-                    best_violation = total_violation.detach()
-    else:
-        good_tree = tree
-
-    if good_tree is None:
-        # No tree in samples satisfied constraints.
+    # Use hierarchical sampling with pose constraints applied at each stage
+    # Note: grammar parameter is not used here since stage grammars are created internally
+    tree = sample_hierarchical_scene(pose_constraints=pose_constraints, seed=seed)
+    if tree is None:
+        logging.error("Hierarchical sampling failed.")
         return None, None
+
+    # HMC is now applied per-stage within sample_hierarchical_scene()
+    # No need to apply HMC again on the combined scene
+    good_tree = tree
 
     if skip_physics_constraints:
         return None, good_tree
@@ -233,7 +139,7 @@ def sample_realistic_scene(
         deepcopy(good_tree),
         do_forward_sim=True,
         timestep=0.001,
-        T=2.5,
+        T=1.0,  # Reduced from 2.5s - objects already mostly stable from per-stage projection
     )
     return feasible_tree, good_tree
 
@@ -250,58 +156,57 @@ def sample_and_save_direct(extract, output_file, task_id):
 
     # Create grammar and constraints inside the worker
     grammar = SpatialSceneGrammar(
-        root_node_type=Restaurant,
+        root_node_type=AdamScene,
         root_node_tf=drake_tf_to_torch_tf(RigidTransform(p=[0.0, 0.0, 0.0])),
     )
     constraints = [
-        # Restaurant and table constraints.
-        TallStackConstraint(),
-        ObjectOnTableSpacingConstraint(),
-        ObjectsOnTableConstraint(),
-        TablesChairsAndShelvesNotInCollisionConstraint(),
-        # Shelf constraints.
-        BoardGameStackHeightConstraint(max_height=5),
-        LargeBoardGameStackHeightConstraint(max_height=3),
-        MinNumObjectsConstraint(min_num_objects=3),
-        ObjectsNotInCollisionWithStacksConstraintStructure(),
+        # Pose constraints (applied per-stage during hierarchical sampling)
+        ObjectsOutsideIiwa(radius=0.35),
+        ObjectsWithinArcConstraint(angle_min=-115.0, angle_max=115.0),
+        # Structure constraints (applied during stage 1 container layout)
+        MinNumShelvesAndBinsConstraint(min_count=2),
+        ShelvesNotInCollisionWithBinsConstraint(),
+        # Collision constraints (applied during stage 2c floor sampling)
+        SharedStuffNotInCollisionWithShelvesAndBins(),
+        # Note: Shelf-specific structure constraints (BoardGameStackHeightConstraint, etc.)
+        # are now enforced naturally by the shelf grammar during stage 2a sampling
     ]
 
     max_tries = 1
     counter = 0
     while counter < max_tries:
         try:
-            tree, _ = sample_realistic_scene(grammar, constraints)
+            tree, _ = sample_hierarchical_realistic_scene(grammar, constraints)
             if tree is not None:
-                result = extract_tree(tree, filter=True) if extract else tree
-                if result is not None:
-                    # Create a temporary file with the result
-                    with tempfile.NamedTemporaryFile(
-                        delete=False, mode="wb"
-                    ) as temp_file:
-                        pickle.dump(result, temp_file)
-                        temp_path = temp_file.name
+                result = extract_tree(tree) if extract else tree
+                # Create a temporary file with the result
+                with tempfile.NamedTemporaryFile(
+                    delete=False, mode="wb"
+                ) as temp_file:
+                    pickle.dump(result, temp_file)
+                    temp_path = temp_file.name
 
-                    # Append the temporary file to the output file with file locking
-                    with open(output_file, "ab") as f:
-                        # Acquire an exclusive lock
-                        fcntl.flock(f, fcntl.LOCK_EX)
-                        try:
-                            # Read the temporary file and append its contents
-                            with open(temp_path, "rb") as temp:
-                                f.write(temp.read())
-                            # Ensure data is written to disk
-                            f.flush()
-                            os.fsync(f.fileno())
-                        finally:
-                            # Release the lock
-                            fcntl.flock(f, fcntl.LOCK_UN)
+                # Append the temporary file to the output file with file locking
+                with open(output_file, "ab") as f:
+                    # Acquire an exclusive lock
+                    fcntl.flock(f, fcntl.LOCK_EX)
+                    try:
+                        # Read the temporary file and append its contents
+                        with open(temp_path, "rb") as temp:
+                            f.write(temp.read())
+                        # Ensure data is written to disk
+                        f.flush()
+                        os.fsync(f.fileno())
+                    finally:
+                        # Release the lock
+                        fcntl.flock(f, fcntl.LOCK_UN)
 
-                    # Remove the temporary file
-                    os.unlink(temp_path)
+                # Remove the temporary file
+                os.unlink(temp_path)
 
-                    return True
+                return True
         except Exception as e:
-            print(f"Exception during sampling in worker (task {task_id}): {e}")
+            logging.error(f"Exception during sampling in worker (task {task_id}): {e}")
         counter += 1
     return False
 
