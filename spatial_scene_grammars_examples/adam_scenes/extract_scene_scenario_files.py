@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+from tqdm import tqdm
 
 from pydrake.all import (
     AddMultibodyPlantSceneGraph,
@@ -230,9 +231,7 @@ def main():
     print(f"Loaded {len(scenes)} scenes.")
 
     # Process each scene
-    for scene_idx, scene in enumerate(scenes):
-        print(f"Processing scene {scene_idx + 1}/{len(scenes)}...")
-
+    for scene_idx, scene in enumerate(tqdm(scenes, desc="Processing scenes")):
         # Generate YAML content
         yaml_content = generate_scene_yaml(scene, scene_idx)
 
@@ -240,8 +239,6 @@ def main():
         output_file = output_path / f"scene_{scene_idx:03d}.dmd.yaml"
         with open(output_file, "w") as f:
             f.write(yaml_content)
-
-        print(f"  Wrote {output_file}")
 
     print(f"\nSuccessfully converted {len(scenes)} scenes to {output_path}")
 
